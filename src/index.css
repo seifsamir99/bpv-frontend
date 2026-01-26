@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  @apply bg-slate-50 text-slate-800;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-100 rounded;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded hover:bg-slate-400;
+}
+
+/* Gradient button styles */
+.btn-gradient-blue {
+  @apply bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg font-medium
+         hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-md hover:shadow-lg;
+}
+
+.btn-gradient-purple {
+  @apply bg-gradient-to-r from-purple-500 to-purple-600 text-white px-4 py-2 rounded-lg font-medium
+         hover:from-purple-600 hover:to-purple-700 transition-all duration-200 shadow-md hover:shadow-lg;
+}
+
+.btn-gradient-green {
+  @apply bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-4 py-2 rounded-lg font-medium
+         hover:from-emerald-600 hover:to-emerald-700 transition-all duration-200 shadow-md hover:shadow-lg;
+}
+
+.btn-gradient-orange {
+  @apply bg-gradient-to-r from-orange-500 to-orange-600 text-white px-4 py-2 rounded-lg font-medium
+         hover:from-orange-600 hover:to-orange-700 transition-all duration-200 shadow-md hover:shadow-lg;
+}
+
+.btn-gradient-pink {
+  @apply bg-gradient-to-r from-pink-500 to-pink-600 text-white px-4 py-2 rounded-lg font-medium
+         hover:from-pink-600 hover:to-pink-700 transition-all duration-200 shadow-md hover:shadow-lg;
+}
+
+/* Card styles */
+.card {
+  @apply bg-white rounded-xl shadow-md hover:shadow-lg transition-shadow duration-200;
+}
+
+/* Input styles */
+.input-field {
+  @apply w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all;
+}
+
+.input-label {
+  @apply block text-sm font-medium text-slate-700 mb-1;
+}
+
+/* Slide panel backdrop */
+.backdrop-blur-custom {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  body {
+    background: white !important;
+  }
+}
