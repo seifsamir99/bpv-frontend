@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import '@n8n/chat/style.css';
 import { createChat } from '@n8n/chat';
 
+// BPV AI Chat Widget - Colorful gradient theme
+
 export default function ChatWidget() {
   useEffect(() => {
     // Add custom styles for colorful chat widget
