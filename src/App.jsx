@@ -7,6 +7,7 @@ import { useVouchers } from './hooks/useVouchers';
 
 export default function App() {
   const [view, setView] = useState('cards');
+  const [typeFilter, setTypeFilter] = useState('all'); // 'all' | 'PDC' | 'CDC'
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedVoucher, setSelectedVoucher] = useState(null);
   const [suggestedBpvNo, setSuggestedBpvNo] = useState(null);
@@ -73,6 +74,8 @@ export default function App() {
           error={error}
           view={view}
           onViewChange={setView}
+          typeFilter={typeFilter}
+          onTypeFilterChange={setTypeFilter}
           onEdit={handleEditVoucher}
           onDelete={handleDeleteVoucher}
         />

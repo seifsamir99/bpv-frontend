@@ -12,5 +12,26 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+
+    <!-- n8n AI Chat Widget -->
+    <link href="https://cdn.n8n.io/chat/style.css" rel="stylesheet" />
+    <script type="module">
+      import { createChat } from 'https://cdn.n8n.io/chat/chat.bundle.es.js';
+      createChat({
+        webhookUrl: 'https://n8n.srv1012058.hstgr.cloud/webhook/6275a689-9206-4c71-935c-e6071395495b/chat',
+        mode: 'window',
+        showWelcomeScreen: true,
+        initialMessages: ['Hi! I am your BPV Assistant. How can I help you today?'],
+        i18n: {
+          en: {
+            title: 'BPV Assistant',
+            subtitle: 'Ask me anything about your vouchers',
+            footer: '',
+            getStarted: 'Start Chat',
+            inputPlaceholder: 'Type your message...',
+          },
+        },
+      });
+    </script>
   </body>
 </html>
