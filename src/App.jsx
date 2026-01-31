@@ -3,6 +3,7 @@ import Header from './components/Header';
 import VoucherList from './components/VoucherList';
 import SlideOutPanel from './components/SlideOutPanel';
 import VoucherForm from './components/VoucherForm';
+import ChatWidget from './components/ChatWidget';
 import { useVouchers } from './hooks/useVouchers';
 
 export default function App() {
@@ -95,6 +96,7 @@ export default function App() {
           suggestedBpvNo={suggestedBpvNo}
         />
       </SlideOutPanel>
+      <ChatWidget />
     </div>
   );
 }

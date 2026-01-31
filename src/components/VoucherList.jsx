@@ -10,9 +10,15 @@ export default function VoucherList({
   error,
   view,
   onViewChange,
+  typeFilter,
+  onTypeFilterChange,
   onEdit,
   onDelete
 }) {
+  // Filter vouchers based on type
+  const filteredVouchers = typeFilter === 'all'
+    ? vouchers
+    : vouchers.filter(v => v.pdcType === typeFilter);
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -52,18 +58,57 @@ export default function VoucherList({
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <p className="text-sm text-slate-500">
-          {vouchers.length} voucher{vouchers.length !== 1 ? 's' : ''}
+          {filteredVouchers.length === vouchers.length
+            ? `${vouchers.length} voucher${vouchers.length !== 1 ? 's' : ''}`
+            : `Showing ${filteredVouchers.length} of ${vouchers.length} vouchers`}
         </p>
-        <ViewToggle view={view} onViewChange={onViewChange} />
+
+        <div className="flex items-center gap-4">
+          {/* Type Filter */}
+          <div className="flex items-center gap-1 bg-white rounded-lg border border-slate-200 p-1">
+            <button
+              onClick={() => onTypeFilterChange('all')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                typeFilter === 'all'
+                  ? 'bg-slate-800 text-white'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => onTypeFilterChange('PDC')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                typeFilter === 'PDC'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-blue-600 hover:bg-blue-50'
+              }`}
+            >
+              PDC
+            </button>
+            <button
+              onClick={() => onTypeFilterChange('CDC')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                typeFilter === 'CDC'
+                  ? 'bg-orange-500 text-white'
+                  : 'text-orange-600 hover:bg-orange-50'
+              }`}
+            >
+              CDC
+            </button>
+          </div>
+
+          <ViewToggle view={view} onViewChange={onViewChange} />
+        </div>
       </div>
 
       {/* View */}
       {view === 'table' ? (
-        <TableView vouchers={vouchers} onEdit={onEdit} onDelete={onDelete} />
+        <TableView vouchers={filteredVouchers} onEdit={onEdit} onDelete={onDelete} />
       ) : (
-        <CardView vouchers={vouchers} onEdit={onEdit} onDelete={onDelete} />
+        <CardView vouchers={filteredVouchers} onEdit={onEdit} onDelete={onDelete} />
       )}
     </div>
   );

@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// API base URL - uses Netlify Functions via redirect
-const API_BASE = '/api';
+// API base URL - Railway backend
+const API_BASE = 'https://bpv-backend-production.up.railway.app/api';
 
 const api = axios.create({
   baseURL: API_BASE,

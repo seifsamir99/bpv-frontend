@@ -5,17 +5,13 @@ const getAuth = () => {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   let privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
-  // Handle both escaped \n and real newlines
+  // Handle both escaped \n and actual newlines
   if (privateKey) {
-    privateKey = privateKey.replace(/\\n/g, '\n');
+    // If key has escaped newlines (\\n), convert them
+    if (privateKey.includes('\\n')) {
+      privateKey = privateKey.replace(/\\n/g, '\n');
+    }
   }
-
-  console.log('Auth config:', {
-    hasEmail: !!email,
-    hasKey: !!privateKey,
-    keyLength: privateKey?.length,
-    sheetId: process.env.GOOGLE_SHEET_ID
-  });
 
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -36,11 +32,10 @@ const SHEET_ID = process.env.GOOGLE_SHEET_ID || '1DZfS3J6Men-XuX11nXAYnMhgQKCn4S
 const SHEET_NAME = 'BPV';
 const ALL_BPV_SHEET = 'all Bpv';
 
-// Build voucher position map (ported from Python bpv_service.py)
+// Build voucher position map
 const buildVoucherPositionMap = () => {
   const positions = {};
 
-  // BPV #1-9: Old format (~20 rows apart)
   const oldFormatBases = [5, 28, 48, 68, 88, 108, 128, 148, 168];
   oldFormatBases.forEach((base, i) => {
     const bpvNum = i + 1;
@@ -53,7 +48,6 @@ const buildVoucherPositionMap = () => {
     };
   });
 
-  // BPV #10-17: Transitional format
   const transitional = [
     [10, 194], [11, 221], [12, 241], [13, 261],
     [14, 287], [15, 313], [16, 338], [17, 366]
@@ -68,7 +62,6 @@ const buildVoucherPositionMap = () => {
     };
   });
 
-  // BPV #18-60: New 27-row format starting at row 393
   const rowsPerVoucher = 27;
   for (let i = 0; i < 43; i++) {
     const bpvNum = 18 + i;
@@ -87,27 +80,22 @@ const buildVoucherPositionMap = () => {
 
 const VOUCHER_POSITIONS = buildVoucherPositionMap();
 
-// Helper to format date
 const formatDate = (value) => {
   if (!value) return '';
   if (typeof value === 'number') {
-    // Excel serial date conversion
     const date = new Date((value - 25569) * 86400 * 1000);
     return date.toLocaleDateString('en-GB');
   }
   return String(value);
 };
 
-// Helper to parse amount (handles commas in numbers like "100,000")
 const parseAmount = (value) => {
   if (!value) return 0;
   if (typeof value === 'number') return value;
-  // Remove commas and parse
   const cleaned = String(value).replace(/,/g, '');
   return parseFloat(cleaned) || 0;
 };
 
-// Get cell value safely (0-indexed)
 const getCell = (rows, rowIdx, colIdx) => {
   if (rowIdx < rows.length) {
     const row = rows[rowIdx];
@@ -118,38 +106,32 @@ const getCell = (rows, rowIdx, colIdx) => {
   return '';
 };
 
-// Parse a single voucher from sheet data at known position
 const parseVoucherAtPosition = (rows, bpvNum, pos) => {
-  // Row indices in position map are 1-based, convert to 0-based
   const bpvNoRow = pos.bpvNoRow - 1;
   const dateRow = pos.dateRow - 1;
   const dataRow = pos.dataRow - 1;
   const totalRow = pos.totalRow - 1;
 
-  // Get header data
-  const bpvNo = getCell(rows, bpvNoRow, 3);  // Column D
-  const date = getCell(rows, dateRow, 3);     // Column D
-  const pdcType = getCell(rows, bpvNoRow, 4) || 'PDC'; // Column E
+  const bpvNo = getCell(rows, bpvNoRow, 3);
+  const date = getCell(rows, dateRow, 3);
+  const pdcType = getCell(rows, bpvNoRow, 4) || 'PDC';
 
-  // Get line items (up to 5 rows)
   const lineItems = [];
   const skipLabels = ['TOTAL AMOUNT', 'Prepared By', 'Received By', 'Approved By', 'Checked By', '___'];
 
   for (let i = 0; i < 5; i++) {
     const itemRow = dataRow + i;
-    const srNo = getCell(rows, itemRow, 0);       // Column A
-    const description = getCell(rows, itemRow, 1); // Column B
-    const companyName = getCell(rows, itemRow, 2); // Column C
-    const chq = getCell(rows, itemRow, 3);         // Column D
-    const chqDate = getCell(rows, itemRow, 4);     // Column E
-    const debit = getCell(rows, itemRow, 5);       // Column F
-    const credit = getCell(rows, itemRow, 6);      // Column G
+    const srNo = getCell(rows, itemRow, 0);
+    const description = getCell(rows, itemRow, 1);
+    const companyName = getCell(rows, itemRow, 2);
+    const chq = getCell(rows, itemRow, 3);
+    const chqDate = getCell(rows, itemRow, 4);
+    const debit = getCell(rows, itemRow, 5);
+    const credit = getCell(rows, itemRow, 6);
 
-    // Skip if this is a label row
     const isLabel = skipLabels.some(label => String(description).includes(label));
     if (isLabel) continue;
 
-    // Only add if there's actual data
     const hasAmount = parseAmount(debit) > 0 || parseAmount(credit) > 0;
     const hasContent = Boolean(companyName) || Boolean(description);
 
@@ -166,11 +148,8 @@ const parseVoucherAtPosition = (rows, bpvNum, pos) => {
     }
   }
 
-  // Get total
-  const totalStr = getCell(rows, totalRow, 2); // Column C
+  const totalStr = getCell(rows, totalRow, 2);
   const totalAmount = parseAmount(totalStr);
-
-  // Check if voucher has data
   const hasData = lineItems.length > 0 || totalAmount > 0;
 
   return {
@@ -186,7 +165,6 @@ const parseVoucherAtPosition = (rows, bpvNum, pos) => {
   };
 };
 
-// GET all vouchers
 const getAllVouchers = async () => {
   const sheets = await getSheets();
   const response = await sheets.spreadsheets.values.get({
@@ -212,7 +190,6 @@ const getAllVouchers = async () => {
   return { success: true, data: vouchers };
 };
 
-// GET next BPV number
 const getNextNumber = async () => {
   const { data: vouchers } = await getAllVouchers();
 
@@ -220,7 +197,6 @@ const getNextNumber = async () => {
     return { success: true, data: { nextNumber: 1 } };
   }
 
-  // Extract actual BPV numbers
   const bpvNumbers = vouchers
     .map(v => parseInt(v.bpvNo))
     .filter(n => !isNaN(n));
@@ -233,7 +209,6 @@ const getNextNumber = async () => {
   return { success: true, data: { nextNumber: maxBpv + 1 } };
 };
 
-// GET single voucher by position ID
 const getVoucher = async (id) => {
   const bpvNum = parseInt(id);
   const pos = VOUCHER_POSITIONS[bpvNum];
@@ -243,8 +218,6 @@ const getVoucher = async (id) => {
   }
 
   const sheets = await getSheets();
-
-  // Fetch only the relevant rows
   const startRow = pos.bpvNoRow - 5;
   const endRow = pos.totalRow + 10;
 
@@ -255,7 +228,6 @@ const getVoucher = async (id) => {
 
   const rows = response.data.values || [];
 
-  // Adjust position indices for the offset
   const adjustedPos = {
     bpvNoRow: pos.bpvNoRow - startRow + 1,
     dateRow: pos.dateRow - startRow + 1,
@@ -268,7 +240,6 @@ const getVoucher = async (id) => {
   return { success: true, data: voucher };
 };
 
-// Find first empty voucher slot
 const findEmptySlot = async () => {
   const { data: vouchers } = await getAllVouchers();
   const usedSlots = new Set(vouchers.map(v => v.id));
@@ -286,7 +257,6 @@ const findEmptySlot = async () => {
   return null;
 };
 
-// Calculate total from line items
 const calculateTotal = (lineItems) => {
   let total = 0;
   for (const item of lineItems || []) {
@@ -295,12 +265,9 @@ const calculateTotal = (lineItems) => {
   return Math.round(total * 100) / 100;
 };
 
-// Sync voucher to 'all Bpv' sheet
-// Structure: A=BPV#, B=Company, C=Description, D=Date, E=ChqNo, F=ChqDate, G=Total, H=PDC
 const syncToAllBpv = async (bpvNum, voucherData) => {
   const sheets = await getSheets();
 
-  // First, find if this BPV already exists in 'all Bpv'
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: `'${ALL_BPV_SHEET}'!A:A`,
@@ -309,41 +276,35 @@ const syncToAllBpv = async (bpvNum, voucherData) => {
   const rows = response.data.values || [];
   let targetRow = -1;
 
-  // Find the row with this BPV number
   for (let i = 0; i < rows.length; i++) {
     const cellValue = rows[i][0];
     if (cellValue && parseInt(cellValue) === bpvNum) {
-      targetRow = i + 1; // 1-indexed
+      targetRow = i + 1;
       break;
     }
   }
 
-  // Get first line item data (or empty)
   const firstItem = voucherData.lineItems?.[0] || {};
 
-  // Prepare row data
   const rowData = [
-    voucherData.bpvNo || bpvNum,           // A: BPV number
-    firstItem.companyName || '',            // B: Company name
-    firstItem.description || '',            // C: Description
-    voucherData.date || '',                 // D: Date
-    firstItem.chequeNo || '',               // E: Cheque No
-    firstItem.chequeDate || '',             // F: Cheque Date
-    voucherData.totalAmount || '',          // G: Total
-    voucherData.pdcType || 'PDC'            // H: PDC type
+    voucherData.bpvNo || bpvNum,
+    firstItem.companyName || '',
+    firstItem.description || '',
+    voucherData.date || '',
+    firstItem.chequeNo || '',
+    firstItem.chequeDate || '',
+    voucherData.totalAmount || '',
+    voucherData.pdcType || 'PDC'
   ];
 
   if (targetRow > 0) {
-    // Update existing row
     await sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
       range: `'${ALL_BPV_SHEET}'!A${targetRow}:H${targetRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [rowData] }
     });
-    console.log(`Synced BPV #${bpvNum} to 'all Bpv' row ${targetRow}`);
   } else {
-    // Append new row
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
       range: `'${ALL_BPV_SHEET}'!A:H`,
@@ -351,15 +312,12 @@ const syncToAllBpv = async (bpvNum, voucherData) => {
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [rowData] }
     });
-    console.log(`Appended BPV #${bpvNum} to 'all Bpv'`);
   }
 };
 
-// Clear voucher from 'all Bpv' sheet
 const clearFromAllBpv = async (bpvNum) => {
   const sheets = await getSheets();
 
-  // Find the row with this BPV number
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: `'${ALL_BPV_SHEET}'!A:A`,
@@ -371,33 +329,25 @@ const clearFromAllBpv = async (bpvNum) => {
     const cellValue = rows[i][0];
     if (cellValue && parseInt(cellValue) === bpvNum) {
       const targetRow = i + 1;
-      // Clear the row
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
         range: `'${ALL_BPV_SHEET}'!A${targetRow}:H${targetRow}`,
         valueInputOption: 'RAW',
         requestBody: { values: [['', '', '', '', '', '', '', '']] }
       });
-      console.log(`Cleared BPV #${bpvNum} from 'all Bpv' row ${targetRow}`);
       break;
     }
   }
 };
 
-// CREATE new voucher
 const createVoucher = async (data) => {
-  console.log('Creating voucher:', JSON.stringify(data, null, 2));
-
-  // Find empty slot
   const emptySlot = await findEmptySlot();
   if (!emptySlot) {
     return { success: false, error: 'No empty voucher slots available' };
   }
 
-  // Use the empty slot to create the voucher
-  const result = await updateVoucher(emptySlot, data, true); // skipSync=true, we'll sync here
+  const result = await updateVoucher(emptySlot, data, true);
 
-  // Sync to 'all Bpv' sheet
   if (result.success && result.data) {
     await syncToAllBpv(emptySlot, result.data);
   }
@@ -405,10 +355,7 @@ const createVoucher = async (data) => {
   return result;
 };
 
-// UPDATE voucher
 const updateVoucher = async (id, data, skipSync = false) => {
-  console.log('Updating voucher:', { id, data: JSON.stringify(data, null, 2) });
-
   const bpvNum = parseInt(id);
   const pos = VOUCHER_POSITIONS[bpvNum];
 
@@ -419,7 +366,6 @@ const updateVoucher = async (id, data, skipSync = false) => {
   const sheets = await getSheets();
   const requests = [];
 
-  // Update BPV NO (Column D of bpvNoRow)
   if (data.bpvNo !== undefined) {
     requests.push({
       range: `'${SHEET_NAME}'!D${pos.bpvNoRow}`,
@@ -427,7 +373,6 @@ const updateVoucher = async (id, data, skipSync = false) => {
     });
   }
 
-  // Update Date (Column D of dateRow)
   if (data.date !== undefined) {
     requests.push({
       range: `'${SHEET_NAME}'!D${pos.dateRow}`,
@@ -435,7 +380,6 @@ const updateVoucher = async (id, data, skipSync = false) => {
     });
   }
 
-  // Update PDC/CDC (Column E of bpvNoRow)
   if (data.pdcType !== undefined) {
     requests.push({
       range: `'${SHEET_NAME}'!E${pos.bpvNoRow}`,
@@ -443,9 +387,8 @@ const updateVoucher = async (id, data, skipSync = false) => {
     });
   }
 
-  // Update line items
   if (data.lineItems) {
-    const lineItems = data.lineItems.slice(0, 5); // Max 5 items
+    const lineItems = data.lineItems.slice(0, 5);
 
     for (let i = 0; i < lineItems.length; i++) {
       const item = lineItems[i];
@@ -464,7 +407,6 @@ const updateVoucher = async (id, data, skipSync = false) => {
       });
     }
 
-    // Clear unused rows
     for (let i = lineItems.length; i < 5; i++) {
       const row = pos.dataRow + i;
       requests.push({
@@ -474,14 +416,12 @@ const updateVoucher = async (id, data, skipSync = false) => {
     }
   }
 
-  // Update total (Column C of totalRow)
   if (data.totalAmount !== undefined) {
     requests.push({
       range: `'${SHEET_NAME}'!C${pos.totalRow}`,
       values: [[data.totalAmount]]
     });
   } else if (data.lineItems) {
-    // Auto-calculate total if line items provided
     const total = calculateTotal(data.lineItems);
     requests.push({
       range: `'${SHEET_NAME}'!C${pos.totalRow}`,
@@ -489,7 +429,6 @@ const updateVoucher = async (id, data, skipSync = false) => {
     });
   }
 
-  // Batch update all changes
   if (requests.length > 0) {
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: SHEET_ID,
@@ -500,10 +439,8 @@ const updateVoucher = async (id, data, skipSync = false) => {
     });
   }
 
-  // Return updated voucher
   const result = await getVoucher(bpvNum);
 
-  // Sync to 'all Bpv' sheet (unless called from createVoucher which syncs itself)
   if (!skipSync && result.success && result.data) {
     await syncToAllBpv(bpvNum, result.data);
   }
@@ -511,7 +448,6 @@ const updateVoucher = async (id, data, skipSync = false) => {
   return result;
 };
 
-// DELETE voucher (clears data, keeps template)
 const deleteVoucher = async (id) => {
   const bpvNum = parseInt(id);
   const pos = VOUCHER_POSITIONS[bpvNum];
@@ -522,7 +458,6 @@ const deleteVoucher = async (id) => {
 
   const sheets = await getSheets();
 
-  // Clear BPV NO and PDC type
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range: `'${SHEET_NAME}'!D${pos.bpvNoRow}:E${pos.bpvNoRow}`,
@@ -530,7 +465,6 @@ const deleteVoucher = async (id) => {
     requestBody: { values: [['', '']] }
   });
 
-  // Clear Date
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range: `'${SHEET_NAME}'!D${pos.dateRow}`,
@@ -538,7 +472,6 @@ const deleteVoucher = async (id) => {
     requestBody: { values: [['']] }
   });
 
-  // Clear line items (but keep SR.NO structure)
   for (let i = 0; i < 5; i++) {
     const row = pos.dataRow + i;
     await sheets.spreadsheets.values.update({
@@ -549,7 +482,6 @@ const deleteVoucher = async (id) => {
     });
   }
 
-  // Clear total
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range: `'${SHEET_NAME}'!C${pos.totalRow}`,
@@ -557,85 +489,63 @@ const deleteVoucher = async (id) => {
     requestBody: { values: [['']] }
   });
 
-  // Clear from 'all Bpv' sheet
   await clearFromAllBpv(bpvNum);
 
   return { success: true, message: `Voucher #${bpvNum} deleted` };
 };
 
-// Main handler
-exports.handler = async (event, context) => {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Content-Type': 'application/json',
-  };
+// Vercel serverless function handler
+module.exports = async function handler(req, res) {
+  // CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 
-  // Handle preflight
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
   try {
-    // Handle both direct function calls and /api/bpv redirects
-    let path = event.path
-      .replace('/.netlify/functions/bpv', '')
-      .replace('/api/bpv', '');
-    const segments = path.split('/').filter(Boolean);
-    const id = segments[0];
+    // Parse path from URL
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const pathParts = url.pathname.replace('/api/bpv', '').split('/').filter(Boolean);
+    const id = pathParts[0];
 
     // GET requests
-    if (event.httpMethod === 'GET') {
-      if (path === '/next-number' || segments[0] === 'next-number') {
+    if (req.method === 'GET') {
+      if (id === 'next-number') {
         const result = await getNextNumber();
-        return { statusCode: 200, headers, body: JSON.stringify(result) };
+        return res.status(200).json(result);
       }
-      if (id && id !== 'next-number') {
+      if (id) {
         const result = await getVoucher(id);
-        return { statusCode: 200, headers, body: JSON.stringify(result) };
+        return res.status(200).json(result);
       }
       const result = await getAllVouchers();
-      return { statusCode: 200, headers, body: JSON.stringify(result) };
+      return res.status(200).json(result);
     }
 
     // POST - Create
-    if (event.httpMethod === 'POST') {
-      const data = JSON.parse(event.body);
-      const result = await createVoucher(data);
-      return { statusCode: 201, headers, body: JSON.stringify(result) };
+    if (req.method === 'POST') {
+      const result = await createVoucher(req.body);
+      return res.status(201).json(result);
     }
 
     // PUT - Update
-    if (event.httpMethod === 'PUT' && id) {
-      const data = JSON.parse(event.body);
-      const result = await updateVoucher(id, data);
-      return { statusCode: 200, headers, body: JSON.stringify(result) };
+    if (req.method === 'PUT' && id) {
+      const result = await updateVoucher(id, req.body);
+      return res.status(200).json(result);
     }
 
     // DELETE
-    if (event.httpMethod === 'DELETE' && id) {
+    if (req.method === 'DELETE' && id) {
       const result = await deleteVoucher(id);
-      return { statusCode: 200, headers, body: JSON.stringify(result) };
+      return res.status(200).json(result);
     }
 
-    return {
-      statusCode: 404,
-      headers,
-      body: JSON.stringify({ success: false, error: 'Not found' }),
-    };
+    return res.status(404).json({ success: false, error: 'Not found' });
   } catch (error) {
-    console.error('BPV Function Error:', {
-      message: error.message,
-      stack: error.stack,
-      code: error.code,
-      method: event.httpMethod,
-      path: event.path
-    });
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ success: false, error: error.message }),
-    };
+    console.error('BPV API Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 };
