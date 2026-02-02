@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react';
 import { HiDocumentText, HiSearch, HiSortDescending, HiCalendar } from 'react-icons/hi';
-import Fuse from 'fuse.js';
 import TableView from './TableView';
 import CardView from './CardView';
 import ViewToggle from './ViewToggle';
@@ -36,23 +35,67 @@ export default function VoucherList({
 }) {
   // Search, sort, and date filter state
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchField, setSearchField] = useState('all'); // all, company, cheque, bpv, description
   const [sortBy, setSortBy] = useState('date-desc'); // date-desc, date-asc, amount-desc, amount-asc, bpv-desc, bpv-asc
   const [dateFilter, setDateFilter] = useState('all'); // all, this-month, last-month, this-year
 
-  // Fuzzy search configuration
-  const fuse = useMemo(() => {
-    return new Fuse(vouchers, {
-      keys: [
-        { name: 'lineItems.companyName', weight: 2 },
-        { name: 'lineItems.description', weight: 1.5 },
-        { name: 'lineItems.chequeNo', weight: 1 },
-        { name: 'bpvNo', weight: 1 },
-      ],
-      threshold: 0.4, // 0 = exact match, 1 = match anything
-      ignoreLocation: true,
-      includeScore: true,
-    });
-  }, [vouchers]);
+  // Search helper - checks if voucher matches search query (case-insensitive substring match)
+  // Also matches when spaces are ignored (e.g., "alphatech" matches "ALPHA TECH")
+  const matchesSearch = (voucher, query, field) => {
+    const q = query.toLowerCase();
+    const qNoSpaces = q.replace(/\s+/g, '');
+
+    const textMatches = (text) => {
+      if (!text) return false;
+      const t = text.toString().toLowerCase();
+      return t.includes(q) || t.replace(/\s+/g, '').includes(qNoSpaces);
+    };
+
+    // Search specific field only
+    if (field === 'bpv') {
+      return textMatches(voucher.bpvNo);
+    }
+
+    if (field === 'cheque') {
+      if (voucher.lineItems && Array.isArray(voucher.lineItems)) {
+        for (const item of voucher.lineItems) {
+          if (textMatches(item.chequeNo)) return true;
+        }
+      }
+      return false;
+    }
+
+    if (field === 'company') {
+      if (voucher.lineItems && Array.isArray(voucher.lineItems)) {
+        for (const item of voucher.lineItems) {
+          if (textMatches(item.companyName)) return true;
+        }
+      }
+      return false;
+    }
+
+    if (field === 'description') {
+      if (voucher.lineItems && Array.isArray(voucher.lineItems)) {
+        for (const item of voucher.lineItems) {
+          if (textMatches(item.description)) return true;
+        }
+      }
+      return false;
+    }
+
+    // Search all fields (default)
+    if (textMatches(voucher.bpvNo)) return true;
+
+    if (voucher.lineItems && Array.isArray(voucher.lineItems)) {
+      for (const item of voucher.lineItems) {
+        if (textMatches(item.companyName)) return true;
+        if (textMatches(item.description)) return true;
+        if (textMatches(item.chequeNo)) return true;
+      }
+    }
+
+    return false;
+  };
 
   // Apply all filters and sorting
   const processedVouchers = useMemo(() => {
@@ -88,11 +131,9 @@ export default function VoucherList({
       });
     }
 
-    // 3. Apply fuzzy search
+    // 3. Apply search (exact substring match)
     if (searchQuery.trim()) {
-      const searchResults = fuse.search(searchQuery);
-      const matchedIds = new Set(searchResults.map(r => r.item.id));
-      result = result.filter(v => matchedIds.has(v.id));
+      result = result.filter(v => matchesSearch(v, searchQuery.trim(), searchField));
     }
 
     // 4. Apply sorting
@@ -116,7 +157,7 @@ export default function VoucherList({
     });
 
     return result;
-  }, [vouchers, typeFilter, dateFilter, searchQuery, sortBy, fuse]);
+  }, [vouchers, typeFilter, dateFilter, searchQuery, searchField, sortBy]);
 
   // Calculate totals for filtered vouchers
   const totals = useMemo(() => {
@@ -165,24 +206,43 @@ export default function VoucherList({
 
   return (
     <div className="space-y-4">
-      {/* Search Bar */}
-      <div className="relative">
-        <HiSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-        <input
-          type="text"
-          placeholder="Search by company, description, cheque number, or BPV..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-slate-700 placeholder-slate-400"
-        />
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-          >
-            ✕
-          </button>
-        )}
+      {/* Search Bar with Field Selector */}
+      <div className="flex gap-2">
+        <select
+          value={searchField}
+          onChange={(e) => setSearchField(e.target.value)}
+          className="px-3 py-3 border border-slate-200 rounded-xl bg-white text-sm font-medium text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none cursor-pointer"
+        >
+          <option value="all">All Fields</option>
+          <option value="company">Company</option>
+          <option value="cheque">Cheque #</option>
+          <option value="bpv">BPV #</option>
+          <option value="description">Description</option>
+        </select>
+        <div className="relative flex-1">
+          <HiSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <input
+            type="text"
+            placeholder={
+              searchField === 'all' ? "Search by company, description, cheque number, or BPV..." :
+              searchField === 'company' ? "Search by company name..." :
+              searchField === 'cheque' ? "Search by cheque number..." :
+              searchField === 'bpv' ? "Search by BPV number..." :
+              "Search by description..."
+            }
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-slate-700 placeholder-slate-400"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filters Toolbar */}
