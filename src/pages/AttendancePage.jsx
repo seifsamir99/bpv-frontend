@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch, HiChevronLeft, HiChevronRight, HiX } from 'react-icons/hi';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch, HiChevronLeft, HiChevronRight, HiX, HiChevronDown } from 'react-icons/hi';
 import PageHeader from '../components/PageHeader';
 import useAttendance from '../hooks/useAttendance';
 
@@ -19,6 +19,62 @@ const STATUS_COLORS = {
   'Joined': 'bg-blue-100 text-blue-700 border-blue-200',
   '': 'bg-white text-slate-400 border-slate-200',
 };
+
+// Custom colored dropdown for attendance status
+function StatusDropdown({ currentStatus, statuses, onSelect, onCustom, disabled }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    if (open) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const colorClass = STATUS_COLORS[currentStatus] || STATUS_COLORS[''];
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => !disabled && setOpen(!open)}
+        disabled={disabled}
+        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors disabled:opacity-50 ${colorClass}`}
+      >
+        {currentStatus || 'Select...'}
+        <HiChevronDown className={`w-4 h-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-50 mt-1 w-40 bg-white rounded-lg shadow-lg border border-slate-200 py-1 max-h-60 overflow-y-auto">
+          <button
+            onClick={() => { onSelect(''); setOpen(false); }}
+            className="w-full text-left px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-50 transition-colors"
+          >
+            Clear
+          </button>
+          {statuses.map(status => (
+            <button
+              key={status}
+              onClick={() => { onSelect(status); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 text-sm font-medium rounded-sm transition-colors ${STATUS_COLORS[status] || 'bg-purple-50 text-purple-700'} hover:opacity-80 ${currentStatus === status ? 'ring-2 ring-purple-400 ring-inset' : ''}`}
+            >
+              {status}
+            </button>
+          ))}
+          <div className="border-t border-slate-100 mt-1 pt-1">
+            <button
+              onClick={() => { onCustom(); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-sm text-purple-600 font-medium hover:bg-purple-50 transition-colors"
+            >
+              + Custom...
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AttendancePage() {
   const today = new Date();
@@ -288,7 +344,7 @@ export default function AttendancePage() {
         </div>
 
         {/* Attendance Grid */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200">
           <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-slate-700">
@@ -364,24 +420,13 @@ export default function AttendancePage() {
                           </button>
                         </div>
                       ) : (
-                        <select
-                          value={currentStatus}
-                          onChange={(e) => {
-                            if (e.target.value === '__custom__') {
-                              setCustomInput(prev => ({ ...prev, [record.employeeId]: '' }));
-                            } else {
-                              handleStatusChange(record.employeeId, e.target.value);
-                            }
-                          }}
+                        <StatusDropdown
+                          currentStatus={currentStatus}
+                          statuses={allStatuses}
+                          onSelect={(status) => handleStatusChange(record.employeeId, status)}
+                          onCustom={() => setCustomInput(prev => ({ ...prev, [record.employeeId]: '' }))}
                           disabled={isSaving}
-                          className={`px-3 py-2 rounded-lg border text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500 ${STATUS_COLORS[currentStatus] || STATUS_COLORS['']}`}
-                        >
-                          <option value="">Select...</option>
-                          {allStatuses.map(status => (
-                            <option key={status} value={status}>{status}</option>
-                          ))}
-                          <option value="__custom__">+ Custom...</option>
-                        </select>
+                        />
                       )}
                     </div>
                   </div>
