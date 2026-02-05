@@ -1,9 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch, HiChevronLeft, HiChevronRight } from 'react-icons/hi';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch, HiChevronLeft, HiChevronRight, HiX } from 'react-icons/hi';
 import PageHeader from '../components/PageHeader';
 import useAttendance from '../hooks/useAttendance';
 
-const ATTENDANCE_STATUSES = ['Present', 'Absent', 'Leave', 'Off', 'Sick', 'Joined'];
+const DEFAULT_STATUSES = ['Present', 'Absent', 'Leave', 'Off', 'Sick', 'Joined'];
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -29,6 +29,18 @@ export default function AttendancePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDesignation, setFilterDesignation] = useState('');
   const [saving, setSaving] = useState({});
+  const [customInput, setCustomInput] = useState({}); // { employeeId: 'typing value' }
+
+  // Collect all unique statuses from existing data (includes custom ones)
+  const allStatuses = useMemo(() => {
+    const found = new Set(DEFAULT_STATUSES);
+    attendance.forEach(record => {
+      Object.values(record.days || {}).forEach(val => {
+        if (val && !found.has(val)) found.add(val);
+      });
+    });
+    return [...found];
+  }, [attendance]);
 
   // Derived month info
   const monthName = MONTH_NAMES[selectedMonth];
@@ -314,17 +326,63 @@ export default function AttendancePage() {
                       {isSaving && (
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
                       )}
-                      <select
-                        value={currentStatus}
-                        onChange={(e) => handleStatusChange(record.employeeId, e.target.value)}
-                        disabled={isSaving}
-                        className={`px-3 py-2 rounded-lg border text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500 ${STATUS_COLORS[currentStatus] || STATUS_COLORS['']}`}
-                      >
-                        <option value="">Select...</option>
-                        {ATTENDANCE_STATUSES.map(status => (
-                          <option key={status} value={status}>{status}</option>
-                        ))}
-                      </select>
+                      {customInput[record.employeeId] !== undefined ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            autoFocus
+                            value={customInput[record.employeeId]}
+                            onChange={(e) => setCustomInput(prev => ({ ...prev, [record.employeeId]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && customInput[record.employeeId].trim()) {
+                                handleStatusChange(record.employeeId, customInput[record.employeeId].trim());
+                                setCustomInput(prev => { const n = { ...prev }; delete n[record.employeeId]; return n; });
+                              }
+                              if (e.key === 'Escape') {
+                                setCustomInput(prev => { const n = { ...prev }; delete n[record.employeeId]; return n; });
+                              }
+                            }}
+                            placeholder="Type status..."
+                            className="w-28 px-2 py-1.5 rounded-lg border border-purple-300 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                          />
+                          <button
+                            onClick={() => {
+                              if (customInput[record.employeeId].trim()) {
+                                handleStatusChange(record.employeeId, customInput[record.employeeId].trim());
+                              }
+                              setCustomInput(prev => { const n = { ...prev }; delete n[record.employeeId]; return n; });
+                            }}
+                            className="p-1.5 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                          >
+                            <HiCheck className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setCustomInput(prev => { const n = { ...prev }; delete n[record.employeeId]; return n; })}
+                            className="p-1.5 rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200"
+                          >
+                            <HiX className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <select
+                          value={currentStatus}
+                          onChange={(e) => {
+                            if (e.target.value === '__custom__') {
+                              setCustomInput(prev => ({ ...prev, [record.employeeId]: '' }));
+                            } else {
+                              handleStatusChange(record.employeeId, e.target.value);
+                            }
+                          }}
+                          disabled={isSaving}
+                          className={`px-3 py-2 rounded-lg border text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500 ${STATUS_COLORS[currentStatus] || STATUS_COLORS['']}`}
+                        >
+                          <option value="">Select...</option>
+                          {allStatuses.map(status => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                          <option value="__custom__">+ Custom...</option>
+                        </select>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -341,14 +399,15 @@ export default function AttendancePage() {
 
         {/* Summary Stats */}
         <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
-          {ATTENDANCE_STATUSES.map(status => {
+          {allStatuses.map(status => {
             const count = filteredAttendance.filter(
               r => r.days?.[selectedDay]?.toLowerCase() === status.toLowerCase()
             ).length;
+            if (count === 0 && !DEFAULT_STATUSES.includes(status)) return null;
             return (
               <div
                 key={status}
-                className={`rounded-lg border p-3 ${STATUS_COLORS[status]}`}
+                className={`rounded-lg border p-3 ${STATUS_COLORS[status] || 'bg-purple-50 text-purple-700 border-purple-200'}`}
               >
                 <div className="text-2xl font-bold">{count}</div>
                 <div className="text-sm">{status}</div>
