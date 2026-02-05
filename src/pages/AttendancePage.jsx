@@ -1,9 +1,14 @@
 import React, { useState, useMemo } from 'react';
-import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch } from 'react-icons/hi';
+import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch, HiChevronLeft, HiChevronRight } from 'react-icons/hi';
 import PageHeader from '../components/PageHeader';
 import useAttendance from '../hooks/useAttendance';
 
 const ATTENDANCE_STATUSES = ['Present', 'Absent', 'Leave', 'Off', 'Sick', 'Joined'];
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
 
 const STATUS_COLORS = {
   'Present': 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -16,17 +21,46 @@ const STATUS_COLORS = {
 };
 
 export default function AttendancePage() {
+  const today = new Date();
   const { attendance, loading, error, updateAttendance, markAllAs, refresh } = useAttendance();
-  const [selectedDay, setSelectedDay] = useState(new Date().getDate());
+  const [selectedMonth, setSelectedMonth] = useState(today.getMonth());
+  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
+  const [selectedDay, setSelectedDay] = useState(today.getDate());
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDesignation, setFilterDesignation] = useState('');
   const [saving, setSaving] = useState({});
 
-  // Get current month info
-  const today = new Date();
-  const currentMonth = today.toLocaleString('default', { month: 'long' });
-  const currentYear = today.getFullYear();
-  const daysInMonth = new Date(currentYear, today.getMonth() + 1, 0).getDate();
+  // Derived month info
+  const monthName = MONTH_NAMES[selectedMonth];
+  const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+  const isCurrentMonth = selectedMonth === today.getMonth() && selectedYear === today.getFullYear();
+
+  // Navigate months
+  const goToPrevMonth = () => {
+    if (selectedMonth === 0) {
+      setSelectedMonth(11);
+      setSelectedYear(y => y - 1);
+    } else {
+      setSelectedMonth(m => m - 1);
+    }
+    setSelectedDay(1);
+  };
+
+  const goToNextMonth = () => {
+    if (selectedMonth === 11) {
+      setSelectedMonth(0);
+      setSelectedYear(y => y + 1);
+    } else {
+      setSelectedMonth(m => m + 1);
+    }
+    setSelectedDay(1);
+  };
+
+  const goToToday = () => {
+    setSelectedMonth(today.getMonth());
+    setSelectedYear(today.getFullYear());
+    setSelectedDay(today.getDate());
+  };
 
   // Extract unique designations for filter
   const designations = useMemo(() => {
@@ -77,7 +111,7 @@ export default function AttendancePage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
         <PageHeader
           title="Attendance"
-          subtitle={`${currentMonth} ${currentYear}`}
+          subtitle={`${monthName} ${selectedYear}`}
           icon={HiClipboardCheck}
         />
         <div className="flex items-center justify-center h-64">
@@ -92,7 +126,7 @@ export default function AttendancePage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
         <PageHeader
           title="Attendance"
-          subtitle={`${currentMonth} ${currentYear}`}
+          subtitle={`${monthName} ${selectedYear}`}
           icon={HiClipboardCheck}
         />
         <div className="max-w-7xl mx-auto px-4 py-8">
@@ -108,7 +142,7 @@ export default function AttendancePage() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       <PageHeader
         title="Attendance"
-        subtitle={`${currentMonth} ${currentYear}`}
+        subtitle={`${monthName} ${selectedYear}`}
         icon={HiClipboardCheck}
         onAction={refresh}
         actionLabel="Refresh"
@@ -116,10 +150,58 @@ export default function AttendancePage() {
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* Day Selector */}
+        {/* Month & Day Selector */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-slate-700">Select Day</h3>
+          {/* Month Navigation */}
+          <div className="flex items-center justify-between mb-4">
+            <button
+              onClick={goToPrevMonth}
+              className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              <HiChevronLeft className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <select
+                value={selectedMonth}
+                onChange={(e) => { setSelectedMonth(parseInt(e.target.value)); setSelectedDay(1); }}
+                className="text-lg font-bold text-slate-800 bg-transparent border-none focus:outline-none cursor-pointer pr-1"
+              >
+                {MONTH_NAMES.map((name, idx) => (
+                  <option key={idx} value={idx}>{name}</option>
+                ))}
+              </select>
+              <select
+                value={selectedYear}
+                onChange={(e) => { setSelectedYear(parseInt(e.target.value)); setSelectedDay(1); }}
+                className="text-lg font-bold text-slate-800 bg-transparent border-none focus:outline-none cursor-pointer"
+              >
+                {[2024, 2025, 2026, 2027].map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+
+              {!isCurrentMonth && (
+                <button
+                  onClick={goToToday}
+                  className="ml-2 px-3 py-1 text-xs font-medium bg-purple-100 text-purple-700 rounded-full hover:bg-purple-200 transition-colors"
+                >
+                  Today
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={goToNextMonth}
+              className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              <HiChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Day Buttons */}
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-slate-500 font-medium">Select Day</span>
             <span className="text-sm text-slate-500">
               Day {selectedDay} of {daysInMonth}
             </span>
@@ -132,7 +214,7 @@ export default function AttendancePage() {
                 className={`w-9 h-9 rounded-lg text-sm font-medium transition-all ${
                   selectedDay === day
                     ? 'bg-purple-600 text-white shadow-md'
-                    : day === today.getDate()
+                    : isCurrentMonth && day === today.getDate()
                     ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
@@ -201,7 +283,7 @@ export default function AttendancePage() {
                 {filteredAttendance.length} Employees
               </span>
               <span className="text-sm text-slate-500">
-                Day {selectedDay}, {currentMonth} {currentYear}
+                Day {selectedDay}, {monthName} {selectedYear}
               </span>
             </div>
           </div>
