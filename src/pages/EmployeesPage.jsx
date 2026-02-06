@@ -1,8 +1,11 @@
-import React, { useState, useMemo } from 'react';
-import { HiUserGroup, HiPlus, HiSearch, HiFilter, HiPencil, HiTrash, HiX } from 'react-icons/hi';
+import React, { useState, useMemo, useEffect } from 'react';
+import { HiUserGroup, HiPlus, HiSearch, HiFilter, HiPencil, HiTrash, HiX, HiExclamationCircle, HiSwitchHorizontal, HiRefresh } from 'react-icons/hi';
+import axios from 'axios';
 import PageHeader from '../components/PageHeader';
 import SlideOutPanel from '../components/SlideOutPanel';
 import useEmployees from '../hooks/useEmployees';
+
+const API_BASE_URL = 'https://bpv-backend-production.up.railway.app/api';
 
 const DESIGNATIONS = [
   'ELECTRICIAN', 'PLUMBER', 'A/C TECHNICIAN', 'Electric foreman', 'Plumber foreman',
@@ -18,6 +21,71 @@ export default function EmployeesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterDesignation, setFilterDesignation] = useState('');
+
+  // Validation state
+  const [validationIssues, setValidationIssues] = useState([]);
+  const [validationLoading, setValidationLoading] = useState(false);
+  const [showWarnings, setShowWarnings] = useState(true);
+  const [actionLoading, setActionLoading] = useState(null);
+
+  // Fetch validation issues
+  const fetchValidation = async () => {
+    setValidationLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE_URL}/employees/validation`);
+      if (res.data.success) {
+        setValidationIssues(res.data.issues);
+      }
+    } catch (err) {
+      console.error('Error fetching validation:', err);
+    } finally {
+      setValidationLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchValidation();
+  }, [employees]);
+
+  // Move employee between Labour/Staff
+  const handleMove = async (employeeId, targetType) => {
+    setActionLoading(employeeId);
+    try {
+      const res = await axios.post(`${API_BASE_URL}/employees/${employeeId}/move`, { targetType });
+      if (res.data.success) {
+        refresh();
+        fetchValidation();
+      } else {
+        alert(res.data.error || 'Failed to move employee');
+      }
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Fix missing salary record
+  const handleFixMissing = async (issue) => {
+    setActionLoading(issue.employeeId);
+    try {
+      const res = await axios.post(`${API_BASE_URL}/employees/${issue.employeeId}/fix-missing`, {
+        targetType: issue.attendanceType,
+        ratePerDay: 0,
+        ratePerHour: 0
+      });
+      if (res.data.success) {
+        refresh();
+        fetchValidation();
+      } else {
+        alert(res.data.error || 'Failed to fix employee');
+      }
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   // Filter employees
   const filteredEmployees = useMemo(() => {
@@ -140,6 +208,68 @@ export default function EmployeesPage() {
           </div>
         </div>
 
+        {/* Validation Warnings */}
+        {validationIssues.length > 0 && showWarnings && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-amber-700">
+                <HiExclamationCircle className="w-5 h-5" />
+                <span className="font-medium">{validationIssues.length} Data Sync Issues Found</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={fetchValidation}
+                  disabled={validationLoading}
+                  className="p-1.5 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors"
+                  title="Refresh"
+                >
+                  <HiRefresh className={`w-4 h-4 ${validationLoading ? 'animate-spin' : ''}`} />
+                </button>
+                <button
+                  onClick={() => setShowWarnings(false)}
+                  className="p-1.5 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors"
+                >
+                  <HiX className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {validationIssues.map((issue, i) => (
+                <div key={i} className="flex items-center justify-between bg-white rounded-lg p-3 border border-amber-100">
+                  <div className="flex-1">
+                    <div className="font-medium text-slate-800">{issue.name} <span className="text-slate-400 text-sm">#{issue.employeeId}</span></div>
+                    <div className="text-sm text-amber-600">
+                      {issue.type === 'missing_salary' && `In ${issue.attendanceType} attendance but missing from salary sheet`}
+                      {issue.type === 'missing_attendance' && `In ${issue.salaryType} salary but missing from attendance sheet`}
+                      {issue.type === 'type_mismatch' && `Type mismatch: ${issue.attendanceType} attendance vs ${issue.salaryType} salary`}
+                    </div>
+                  </div>
+                  {issue.type === 'missing_salary' && (
+                    <button
+                      onClick={() => handleFixMissing(issue)}
+                      disabled={actionLoading === issue.employeeId}
+                      className="ml-3 px-3 py-1.5 bg-amber-500 text-white text-sm font-medium rounded-lg hover:bg-amber-600 disabled:opacity-50"
+                    >
+                      {actionLoading === issue.employeeId ? 'Fixing...' : 'Add to Salary'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Collapsed warnings indicator */}
+        {validationIssues.length > 0 && !showWarnings && (
+          <button
+            onClick={() => setShowWarnings(true)}
+            className="mb-4 flex items-center gap-2 text-amber-600 hover:text-amber-700 text-sm"
+          >
+            <HiExclamationCircle className="w-4 h-4" />
+            {validationIssues.length} issues hidden - click to show
+          </button>
+        )}
+
         {/* Employee List */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="overflow-x-auto">
@@ -183,7 +313,22 @@ export default function EmployeesPage() {
                       {employee.otHours || 0}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-center gap-2">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleMove(
+                            employee.employeeId,
+                            employee.type?.toLowerCase() === 'staff' ? 'labour' : 'staff'
+                          )}
+                          disabled={actionLoading === employee.employeeId}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title={`Move to ${employee.type?.toLowerCase() === 'staff' ? 'Labour' : 'Staff'}`}
+                        >
+                          {actionLoading === employee.employeeId ? (
+                            <HiRefresh className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <HiSwitchHorizontal className="w-4 h-4" />
+                          )}
+                        </button>
                         <button
                           onClick={() => handleEditEmployee(employee)}
                           className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
