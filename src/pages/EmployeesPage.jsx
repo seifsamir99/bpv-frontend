@@ -125,6 +125,25 @@ export default function EmployeesPage() {
 
   const handleSave = async (formData) => {
     if (selectedEmployee) {
+      // Check if type changed - need to move employee between sheets
+      const oldType = selectedEmployee.type?.toLowerCase();
+      const newType = formData.type?.toLowerCase();
+      if (oldType && newType && oldType !== newType) {
+        // Move employee to new sheet first
+        try {
+          const moveRes = await axios.post(`${API_BASE_URL}/employees/${selectedEmployee.employeeId}/move`, {
+            targetType: newType
+          });
+          if (!moveRes.data.success) {
+            return { success: false, error: moveRes.data.error || 'Failed to move employee' };
+          }
+          // After move, update with new data
+          refresh();
+          return { success: true };
+        } catch (err) {
+          return { success: false, error: err.response?.data?.error || err.message };
+        }
+      }
       return await updateEmployee(selectedEmployee.employeeId, formData);
     } else {
       return await createEmployee(formData);

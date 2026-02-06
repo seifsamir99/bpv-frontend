@@ -58,6 +58,12 @@ export const employeeApi = {
     const response = await api.post('/employees/ot/bulk', { updates });
     return response.data;
   },
+
+  // Move employee between Labour and Staff
+  move: async (id, targetType) => {
+    const response = await api.post(`/employees/${id}/move`, { targetType });
+    return response.data;
+  },
 };
 
 export default employeeApi;

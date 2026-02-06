@@ -7,6 +7,7 @@ import AttendancePage from './pages/AttendancePage';
 import EmployeesPage from './pages/EmployeesPage';
 import MonthEndPage from './pages/MonthEndPage';
 import PayrollPage from './pages/PayrollPage';
+import PDCPage from './pages/PDCPage';
 import AIChatWidget from './components/AIChatWidget';
 
 const LAST_PATH_KEY = 'bpv_last_path';
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/employees" element={<EmployeesPage />} />
         <Route path="/month-end" element={<MonthEndPage />} />
         <Route path="/payroll" element={<PayrollPage />} />
+        <Route path="/pdc" element={<PDCPage />} />
       </Routes>
       <AIChatWidget />
     </>

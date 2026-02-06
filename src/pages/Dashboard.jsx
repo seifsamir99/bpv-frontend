@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { HiCurrencyDollar, HiUserGroup, HiDocumentText, HiChartBar, HiClipboardCheck, HiClock } from 'react-icons/hi';
+import { HiCurrencyDollar, HiUserGroup, HiDocumentText, HiChartBar, HiClipboardCheck, HiClock, HiCreditCard } from 'react-icons/hi';
 
 const sections = [
   {
@@ -50,6 +50,30 @@ const sections = [
     hoverGradient: 'hover:from-amber-600 hover:to-amber-700',
     iconBg: 'bg-amber-100',
     iconColor: 'text-amber-600',
+  },
+  {
+    id: 'payroll',
+    title: 'Payroll',
+    description: 'Calculate & Export Monthly Payroll',
+    icon: HiCurrencyDollar,
+    path: '/payroll',
+    color: 'orange',
+    gradient: 'from-orange-500 to-orange-600',
+    hoverGradient: 'hover:from-orange-600 hover:to-orange-700',
+    iconBg: 'bg-orange-100',
+    iconColor: 'text-orange-600',
+  },
+  {
+    id: 'pdc',
+    title: 'PDC Tracker',
+    description: 'Post-Dated Cheques Management',
+    icon: HiCreditCard,
+    path: '/pdc',
+    color: 'cyan',
+    gradient: 'from-cyan-500 to-cyan-600',
+    hoverGradient: 'hover:from-cyan-600 hover:to-cyan-700',
+    iconBg: 'bg-cyan-100',
+    iconColor: 'text-cyan-600',
   },
 ];
 
