@@ -82,7 +82,7 @@ export default function PayrollPage() {
   const [paymentFilter, setPaymentFilter] = useState('all'); // 'all' | 'bank' | 'cash'
 
   const { employees, loading: empLoading, error: empError, refresh: refreshEmp } = useEmployees(selectedType);
-  const { attendance, loading: attLoading, error: attError, refresh: refreshAtt } = useAttendance(selectedType);
+  const { attendance, loading: attLoading, error: attError, refresh: refreshAtt } = useAttendance(selectedType, selectedMonth, selectedYear);
   const { loadDraft, saveDraft, clearDraft, hasDraft, draftTimestamp } = usePayrollDraft(selectedType, selectedYear, selectedMonth);
   const isLoading = empLoading || attLoading;
 
