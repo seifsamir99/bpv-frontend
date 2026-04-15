@@ -291,6 +291,21 @@ export default function PDCPage() {
     }
   };
 
+  // Mark ALL filtered PDCs (current month view) as a status
+  const handleMarkAll = async (newStatus) => {
+    if (filteredPdcs.length === 0) return;
+    if (!window.confirm(`Mark all ${filteredPdcs.length} PDCs as "${newStatus}"?`)) return;
+    try {
+      await axios.patch(`${API_BASE_URL}/pdc/bulk-status`, {
+        chequeNumbers: filteredPdcs.map(p => p.chequeNo),
+        status: newStatus
+      });
+      fetchPdcs();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   // Handle adding new cheque manually
   const handleAddCheque = async (chequeData) => {
     try {
@@ -678,19 +693,38 @@ export default function PDCPage() {
               </button>
             </div>
 
-            {/* Status Filter */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-slate-500">Status:</span>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border border-slate-200 rounded-lg text-sm"
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Mark All buttons */}
+              <button
+                onClick={() => handleMarkAll('Released')}
+                disabled={filteredPdcs.length === 0}
+                className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <option value="all">All</option>
-                {STATUS_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
+                <HiCheckCircle className="w-4 h-4" />
+                Mark All Released
+              </button>
+              <button
+                onClick={() => handleMarkAll('Not Released')}
+                disabled={filteredPdcs.length === 0}
+                className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <HiClock className="w-4 h-4" />
+                Mark All Not Released
+              </button>
+              {/* Status Filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-500">Status:</span>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                >
+                  <option value="all">All</option>
+                  {STATUS_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         </div>
