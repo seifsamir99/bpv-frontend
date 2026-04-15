@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { HiDocumentText } from 'react-icons/hi';
+import { HiDocumentText, HiCreditCard } from 'react-icons/hi';
+import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import VoucherList from '../components/VoucherList';
 import SlideOutPanel from '../components/SlideOutPanel';
 import VoucherForm from '../components/VoucherForm';
-import ChatWidget from '../components/ChatWidget';
 import { useVouchers } from '../hooks/useVouchers';
 
 export default function BPVPage() {
@@ -39,7 +39,7 @@ export default function BPVPage() {
 
   const handleDeleteVoucher = async (voucher) => {
     if (window.confirm(`Delete voucher #${voucher.bpvNo || voucher.id}?`)) {
-      await deleteVoucher(voucher.id);
+      await deleteVoucher(voucher.bpvNo);
     }
   };
 
@@ -72,6 +72,27 @@ export default function BPVPage() {
         actionLabel="New Voucher"
       />
 
+      {/* Quick Links to Trackers */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-500">Quick Links:</span>
+          <Link
+            to="/pdc"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-100 hover:bg-cyan-200 text-cyan-700 text-sm font-medium rounded-lg transition-colors"
+          >
+            <HiCreditCard className="w-4 h-4" />
+            PDC Tracker
+          </Link>
+          <Link
+            to="/cdc"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 text-sm font-medium rounded-lg transition-colors"
+          >
+            <HiCreditCard className="w-4 h-4" />
+            CDC Tracker
+          </Link>
+        </div>
+      </div>
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <VoucherList
           vouchers={vouchers}
@@ -100,8 +121,6 @@ export default function BPVPage() {
           vouchers={vouchers}
         />
       </SlideOutPanel>
-
-      <ChatWidget />
     </div>
   );
 }
