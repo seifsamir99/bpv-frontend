@@ -408,8 +408,6 @@ export default function PDCPage() {
       return (dateA || 0) - (dateB || 0);
     });
 
-    const printWindow = window.open('', '_blank');
-
     // Generate table rows with week-colored dates
     const tableRowsHtml = sortedPdcs.map(pdc => `
       <tr>
@@ -422,7 +420,7 @@ export default function PDCPage() {
       </tr>
     `).join('');
 
-    printWindow.document.write(`
+    const html = `
       <!DOCTYPE html>
       <html>
       <head>
@@ -514,8 +512,11 @@ export default function PDCPage() {
         <script>window.onload = function() { window.print(); }</script>
       </body>
       </html>
-    `);
-    printWindow.document.close();
+    `;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
 
   // Generate calendar days for selected month
