@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch, HiChevronLeft, HiChevronRight, HiX, HiChevronDown } from 'react-icons/hi';
+import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch, HiChevronLeft, HiChevronRight, HiX, HiChevronDown, HiCalendar } from 'react-icons/hi';
 import PageHeader from '../components/PageHeader';
 import useAttendance from '../hooks/useAttendance';
 
@@ -103,7 +103,7 @@ export default function AttendancePage() {
   const [selectedType, setSelectedType] = useState('all');
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth());
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-  const { attendance, loading, error, updateAttendance, markAllAs, refresh, autoFillSundays } = useAttendance(selectedType, selectedMonth, selectedYear);
+  const { attendance, loading, error, updateAttendance, markAllAs, markEmployeeAllDays, refresh, autoFillSundays } = useAttendance(selectedType, selectedMonth, selectedYear);
   const [selectedDay, setSelectedDay] = useState(today.getDate());
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDesignation, setFilterDesignation] = useState('');
@@ -113,6 +113,7 @@ export default function AttendancePage() {
   const [fillingMessage, setFillingMessage] = useState('');
   const [showBulkDropdown, setShowBulkDropdown] = useState(false);
   const bulkDropdownRef = useRef(null);
+  const [showAllMonthDropdown, setShowAllMonthDropdown] = useState(null); // employeeId or null
 
   // Custom status colors persisted in localStorage
   const [statusColors, setStatusColors] = useState(() => {
@@ -143,6 +144,13 @@ export default function AttendancePage() {
     if (showBulkDropdown) document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [showBulkDropdown]);
+
+  useEffect(() => {
+    if (!showAllMonthDropdown) return;
+    const close = () => setShowAllMonthDropdown(null);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showAllMonthDropdown]);
 
   // Collect all unique statuses from existing data (includes custom ones)
   // Deduplicates case-insensitively — keeps DEFAULT_STATUSES casing as canonical
@@ -255,6 +263,14 @@ export default function AttendancePage() {
     setSaving(prev => ({ ...prev, [employeeId]: true }));
     await updateAttendance(employeeId, selectedDay, status, employeeType);
     setSaving(prev => ({ ...prev, [employeeId]: false }));
+  };
+
+  // Handle mark all days in the month for a single employee
+  const handleMarkAllDays = async (record, status) => {
+    setShowAllMonthDropdown(null);
+    setSaving(prev => ({ ...prev, [record.employeeId]: true }));
+    await markEmployeeAllDays(record.employeeId, status, record.type);
+    setSaving(prev => ({ ...prev, [record.employeeId]: false }));
   };
 
   // Handle mark all as a specific status
@@ -609,6 +625,39 @@ export default function AttendancePage() {
                       {isSaving && (
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
                       )}
+
+                      {/* All-month quick-fill */}
+                      <div className="relative" onMouseDown={e => e.stopPropagation()}>
+                        <button
+                          title="Mark all days this month"
+                          disabled={isSaving}
+                          onClick={() => setShowAllMonthDropdown(showAllMonthDropdown === record.employeeId ? null : record.employeeId)}
+                          className="flex items-center gap-1 px-2 py-2 rounded-lg bg-slate-100 text-slate-500 hover:bg-purple-100 hover:text-purple-700 transition-colors text-xs font-medium disabled:opacity-50"
+                        >
+                          <HiCalendar className="w-4 h-4" />
+                        </button>
+                        {showAllMonthDropdown === record.employeeId && (
+                          <div className="absolute right-0 z-50 mt-1 w-44 bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                            <div className="px-3 py-1.5 text-xs text-slate-400 font-medium border-b border-slate-100">
+                              All {monthName} days as…
+                            </div>
+                            {allStatuses.map(status => {
+                              const sHex = statusColors[status] || '#a855f7';
+                              return (
+                                <button
+                                  key={status}
+                                  onClick={() => handleMarkAllDays(record, status)}
+                                  className="w-full text-left px-3 py-1.5 text-sm font-medium transition-colors hover:opacity-80"
+                                  style={getLightStyle(sHex)}
+                                >
+                                  {status}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
                       {customInput[record.employeeId] !== undefined ? (
                         <div className="flex items-center gap-1">
                           <input

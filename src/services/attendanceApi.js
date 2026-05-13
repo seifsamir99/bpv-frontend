@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'https://bpv-backend-production.up.railway.app/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -25,6 +25,12 @@ export const attendanceApi = {
   // Bulk update attendance for multiple employees on a specific day
   bulkUpdate: async (day, updates, type = 'all', month, year) => {
     const response = await api.post('/attendance/bulk', { day, updates, type, month, year });
+    return response.data;
+  },
+
+  // Mark all non-Sunday days in the month for a single employee
+  markAllDays: async (employeeId, status, type, month, year) => {
+    const response = await api.post('/attendance/bulk-all-days', { employeeId, status, type, month, year });
     return response.data;
   },
 };

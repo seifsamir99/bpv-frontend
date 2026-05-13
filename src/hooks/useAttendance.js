@@ -69,6 +69,29 @@ export function useAttendance(type = 'all', month, year) {
     return bulkUpdateAttendance(day, updates, 'all');
   };
 
+  // Mark all non-Sunday days in the month for a single employee
+  const markEmployeeAllDays = async (employeeId, status, employeeType) => {
+    try {
+      const response = await attendanceApi.markAllDays(employeeId, status, employeeType || 'labour', month, year);
+      if (response.success) {
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        setAttendance(prev => prev.map(record => {
+          if (record.employeeId !== employeeId) return record;
+          const updatedDays = { ...record.days };
+          for (let d = 1; d <= daysInMonth; d++) {
+            if (new Date(year, month, d).getDay() !== 0) {
+              updatedDays[d] = status;
+            }
+          }
+          return { ...record, days: updatedDays };
+        }));
+      }
+      return response;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
   // Auto-fill Sundays as "Off" for all employees with empty cells
   const autoFillSundays = useCallback(async (targetYear, targetMonth) => {
     if (attendance.length === 0) return;
@@ -122,6 +145,7 @@ export function useAttendance(type = 'all', month, year) {
     updateAttendance,
     bulkUpdateAttendance,
     markAllAs,
+    markEmployeeAllDays,
     autoFillSundays,
   };
 }
