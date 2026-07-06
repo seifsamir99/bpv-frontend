@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// API base URL - Railway backend
-const API_BASE = 'https://bpv-backend-production.up.railway.app/api';
+// API base URL - uses VITE_API_BASE_URL in production, falls back to Vite proxy in dev
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const api = axios.create({
   baseURL: API_BASE,

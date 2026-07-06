@@ -14,6 +14,7 @@ const sections = [
     hoverGradient: 'hover:from-blue-600 hover:to-blue-700',
     iconBg: 'bg-blue-100',
     iconColor: 'text-blue-600',
+    disabled: false,
   },
   {
     id: 'attendance',
@@ -26,6 +27,7 @@ const sections = [
     hoverGradient: 'hover:from-purple-600 hover:to-purple-700',
     iconBg: 'bg-purple-100',
     iconColor: 'text-purple-600',
+    disabled: false,
   },
   {
     id: 'employees',
@@ -38,6 +40,7 @@ const sections = [
     hoverGradient: 'hover:from-emerald-600 hover:to-emerald-700',
     iconBg: 'bg-emerald-100',
     iconColor: 'text-emerald-600',
+    disabled: false,
   },
   {
     id: 'monthend',
@@ -50,6 +53,7 @@ const sections = [
     hoverGradient: 'hover:from-amber-600 hover:to-amber-700',
     iconBg: 'bg-amber-100',
     iconColor: 'text-amber-600',
+    disabled: false,
   },
   {
     id: 'payroll',
@@ -62,6 +66,20 @@ const sections = [
     hoverGradient: 'hover:from-orange-600 hover:to-orange-700',
     iconBg: 'bg-orange-100',
     iconColor: 'text-orange-600',
+    disabled: false,
+  },
+  {
+    id: 'salaries',
+    title: 'Salaries',
+    description: 'Employee Salary Records',
+    icon: HiCurrencyDollar,
+    path: '/salaries',
+    color: 'indigo',
+    gradient: 'from-indigo-500 to-indigo-600',
+    hoverGradient: 'hover:from-indigo-600 hover:to-indigo-700',
+    iconBg: 'bg-indigo-100',
+    iconColor: 'text-indigo-600',
+    disabled: false,
   },
   {
     id: 'pdc',
@@ -74,6 +92,33 @@ const sections = [
     hoverGradient: 'hover:from-cyan-600 hover:to-cyan-700',
     iconBg: 'bg-cyan-100',
     iconColor: 'text-cyan-600',
+    disabled: false,
+  },
+  {
+    id: 'cdc',
+    title: 'CDC Tracker',
+    description: 'Current-Dated Cheques Management',
+    icon: HiCreditCard,
+    path: '/cdc',
+    color: 'rose',
+    gradient: 'from-rose-500 to-rose-600',
+    hoverGradient: 'hover:from-rose-600 hover:to-rose-700',
+    iconBg: 'bg-rose-100',
+    iconColor: 'text-rose-600',
+    disabled: false,
+  },
+  {
+    id: 'lpo',
+    title: 'LPO Generator',
+    description: 'Local Purchase Orders from Quotations',
+    icon: HiDocumentText,
+    path: '/lpo',
+    color: 'teal',
+    gradient: 'from-teal-500 to-teal-600',
+    hoverGradient: 'hover:from-teal-600 hover:to-teal-700',
+    iconBg: 'bg-teal-100',
+    iconColor: 'text-teal-600',
+    disabled: false,
   },
 ];
 
@@ -106,6 +151,29 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {sections.map((section) => {
             const IconComponent = section.icon;
+            if (section.disabled) {
+              return (
+                <div
+                  key={section.id}
+                  className="relative bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
+                >
+                  <div className={`h-2 bg-gradient-to-r ${section.gradient}`} />
+                  <div className="p-6">
+                    <div className={`w-14 h-14 ${section.iconBg} rounded-xl flex items-center justify-center mb-4`}>
+                      <IconComponent className={`w-8 h-8 ${section.iconColor}`} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">{section.title}</h3>
+                    <p className="text-slate-500 text-sm">{section.description}</p>
+                    <div className="mt-4 flex items-center text-slate-400">
+                      <span className="text-sm font-medium">Open</span>
+                      <svg className="w-4 h-4 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
             return (
               <Link
                 key={section.id}

@@ -1,21 +1,16 @@
 [build]
   command = "npm run build"
   publish = "dist"
-  functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "18"
 
-# Redirect API calls to Netlify Functions
+# Proxy all API calls to Railway backend
 [[redirects]]
-  from = "/api/bpv/*"
-  to = "/.netlify/functions/bpv/:splat"
+  from = "/api/*"
+  to = "https://bpv-backend-production.up.railway.app/api/:splat"
   status = 200
-
-[[redirects]]
-  from = "/api/bpv"
-  to = "/.netlify/functions/bpv"
-  status = 200
+  force = true
 
 # SPA fallback
 [[redirects]]

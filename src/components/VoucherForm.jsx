@@ -5,9 +5,20 @@ import AutoSaveIndicator from './AutoSaveIndicator';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { bpvApi } from '../services/api';
 
-export default function VoucherForm({ voucher, onSave, onDelete, onClose, suggestedBpvNo }) {
+export default function VoucherForm({ voucher, onSave, onDelete, onClose, suggestedBpvNo, vouchers = [] }) {
   const isNew = !voucher?.id;
   const [saveError, setSaveError] = useState(null);
+
+  // Extract unique suggestions from all vouchers
+  const companySuggestions = useMemo(() => {
+    const names = vouchers.flatMap(v => v.lineItems?.map(i => i.companyName) || []);
+    return [...new Set(names.filter(Boolean))].sort();
+  }, [vouchers]);
+
+  const descriptionSuggestions = useMemo(() => {
+    const descriptions = vouchers.flatMap(v => v.lineItems?.map(i => i.description) || []);
+    return [...new Set(descriptions.filter(Boolean))].sort();
+  }, [vouchers]);
 
   const [formData, setFormData] = useState({
     bpvNo: '',
@@ -199,6 +210,8 @@ export default function VoucherForm({ voucher, onSave, onDelete, onClose, sugges
       <LineItemsTable
         items={formData.lineItems}
         onChange={handleLineItemsChange}
+        companySuggestions={companySuggestions}
+        descriptionSuggestions={descriptionSuggestions}
       />
 
       {/* Total */}

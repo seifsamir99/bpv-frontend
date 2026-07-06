@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { HiChat, HiX, HiPaperAirplane, HiSparkles } from 'react-icons/hi';
 import axios from 'axios';
 
-const API_BASE_URL = 'https://bpv-backend-production.up.railway.app/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const QUICK_ACTIONS = [
   "What's the total payroll for this month?",
@@ -44,7 +44,7 @@ export default function AIChatWidget() {
     setLoading(true);
 
     try {
-      const res = await axios.post(`${API_BASE_URL}/ai/chat`, {
+      const res = await axios.post(`${API_BASE_URL}/chat`, {
         message: text,
         history: messages.slice(-6) // Send last 6 messages for context
       });

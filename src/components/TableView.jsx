@@ -3,7 +3,6 @@ import { HiPencil, HiTrash, HiDocumentDownload } from 'react-icons/hi';
 
 export default function TableView({ vouchers, onEdit, onDelete }) {
   const handleDownload = (voucher) => {
-    const printWindow = window.open('', '_blank');
     const lineItems = voucher.lineItems || [];
     const typeColor = voucher.pdcType === 'PDC' ? '#90EE90' : '#FFB6C1';
 
@@ -34,7 +33,17 @@ export default function TableView({ vouchers, onEdit, onDelete }) {
       </tr>
     `).join('');
 
-    printWindow.document.write(`
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+    iframeDoc.write(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -126,11 +135,13 @@ export default function TableView({ vouchers, onEdit, onDelete }) {
             </div>
           </div>
         </div>
-        <script>window.onload = function() { window.print(); }</script>
       </body>
       </html>
     `);
-    printWindow.document.close();
+    iframeDoc.close();
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+    setTimeout(() => document.body.removeChild(iframe), 1000);
   };
 
   return (

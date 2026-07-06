@@ -7,7 +7,7 @@ import useAttendance from '../hooks/useAttendance';
 import usePayrollDraft from '../hooks/usePayrollDraft';
 import { calculateLabourPayroll, calculateStaffPayroll } from '../utils/payrollCalculation';
 
-const API_BASE_URL = 'https://bpv-backend-production.up.railway.app/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 function fmt(n) {

@@ -5,7 +5,7 @@ import PageHeader from '../components/PageHeader';
 import SlideOutPanel from '../components/SlideOutPanel';
 import useEmployees from '../hooks/useEmployees';
 
-const API_BASE_URL = 'https://bpv-backend-production.up.railway.app/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const DESIGNATIONS = [
   'ELECTRICIAN', 'PLUMBER', 'A/C TECHNICIAN', 'Electric foreman', 'Plumber foreman',

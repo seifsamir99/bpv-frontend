@@ -1,7 +1,8 @@
 import React from 'react';
 import { HiPlus, HiMinus } from 'react-icons/hi';
+import AutocompleteInput from './AutocompleteInput';
 
-export default function LineItemsTable({ items, onChange, maxItems = 5 }) {
+export default function LineItemsTable({ items, onChange, maxItems = 5, companySuggestions = [], descriptionSuggestions = [] }) {
   const addItem = () => {
     if (items.length >= maxItems) return;
 
@@ -68,25 +69,26 @@ export default function LineItemsTable({ items, onChange, maxItems = 5 }) {
               )}
             </div>
 
-            {/* Description - full width textarea */}
+            {/* Description - full width with autocomplete */}
             <div>
               <label className="text-xs text-slate-500">Description</label>
-              <textarea
+              <AutocompleteInput
                 value={item.description}
-                onChange={(e) => updateItem(index, 'description', e.target.value)}
+                onChange={(value) => updateItem(index, 'description', value)}
+                suggestions={descriptionSuggestions}
                 placeholder="Cost of project S# 104 - Cheque # 1040..."
-                rows={2}
-                className="input-field text-sm resize-none"
+                multiline
+                className="input-field text-sm"
               />
             </div>
 
-            {/* Company Name */}
+            {/* Company Name - with autocomplete */}
             <div>
               <label className="text-xs text-slate-500">Company Name</label>
-              <input
-                type="text"
+              <AutocompleteInput
                 value={item.companyName}
-                onChange={(e) => updateItem(index, 'companyName', e.target.value)}
+                onChange={(value) => updateItem(index, 'companyName', value)}
+                suggestions={companySuggestions}
                 placeholder="Company name"
                 className="input-field text-sm"
               />
