@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { HiCurrencyDollar, HiUserGroup, HiDocumentText, HiChartBar, HiClipboardCheck, HiClock, HiCreditCard } from 'react-icons/hi';
+import { HiCurrencyDollar, HiUserGroup, HiDocumentText, HiChartBar, HiClipboardCheck, HiClock, HiCreditCard, HiBadgeCheck } from 'react-icons/hi';
 
 const sections = [
   {
@@ -118,6 +118,19 @@ const sections = [
     hoverGradient: 'hover:from-teal-600 hover:to-teal-700',
     iconBg: 'bg-teal-100',
     iconColor: 'text-teal-600',
+    disabled: false,
+  },
+  {
+    id: 'payment-cert',
+    title: 'Payment Certificates',
+    description: 'Certify Subcontractor Monthly Payments',
+    icon: HiBadgeCheck,
+    path: '/payment-cert',
+    color: 'pink',
+    gradient: 'from-pink-500 to-pink-600',
+    hoverGradient: 'hover:from-pink-600 hover:to-pink-700',
+    iconBg: 'bg-pink-100',
+    iconColor: 'text-pink-600',
     disabled: false,
   },
 ];

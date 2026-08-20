@@ -10,6 +10,7 @@ import PayrollPage from './pages/PayrollPage';
 import PDCPage from './pages/PDCPage';
 import CDCPage from './pages/CDCPage';
 import LPOPage from './pages/LPOPage';
+import PaymentCertPage from './pages/PaymentCertPage';
 import AIChatWidget from './components/AIChatWidget';
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/pdc" element={<PDCPage />} />
         <Route path="/cdc" element={<CDCPage />} />
         <Route path="/lpo" element={<LPOPage />} />
+        <Route path="/payment-cert" element={<PaymentCertPage />} />
       </Routes>
       <AIChatWidget />
     </>
