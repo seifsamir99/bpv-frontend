@@ -64,9 +64,9 @@ export function usePaymentCerts() {
   const seq = useRef(0);
   const timer = useRef(null);
 
-  const runPreview = useCallback((gross, otherDeduction) => {
+  const runPreview = useCallback((netPaid, otherDeduction) => {
     clearTimeout(timer.current);
-    const amount = parseFloat(gross);
+    const amount = parseFloat(netPaid);
     if (!contractId || !amount || amount <= 0) {
       setCalc(null);
       setCalcError(null);
@@ -79,7 +79,7 @@ export function usePaymentCerts() {
       try {
         const result = await api.preview({
           contract_id: contractId,
-          gross: amount,
+          net_paid: amount,
           other_deduction: parseFloat(otherDeduction) || 0,
         });
         if (mine !== seq.current) return;

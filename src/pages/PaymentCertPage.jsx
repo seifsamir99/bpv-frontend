@@ -35,7 +35,7 @@ export default function PaymentCertPage() {
 
   // ── the month's certificate ─────────────────────────────────────────
   const [form, setForm] = useState({
-    gross: '', invoice_date: today(), bill_month: defaultBillMonth(),
+    net_paid: '', invoice_date: today(), bill_month: defaultBillMonth(),
     bill_type: 'interim', other_deduction: '', other_deduction_note: '',
   });
   const [saving, setSaving] = useState(false);
@@ -45,12 +45,12 @@ export default function PaymentCertPage() {
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   useEffect(() => {
-    runPreview(form.gross, form.other_deduction);
-  }, [form.gross, form.other_deduction, runPreview]);
+    runPreview(form.net_paid, form.other_deduction);
+  }, [form.net_paid, form.other_deduction, runPreview]);
 
   // Switching contract must not carry the previous one's amount across.
   useEffect(() => {
-    setForm((f) => ({ ...f, gross: '', other_deduction: '', other_deduction_note: '' }));
+    setForm((f) => ({ ...f, net_paid: '', other_deduction: '', other_deduction_note: '' }));
     setSaveError(null);
     setNotice(null);
   }, [contractId]);
@@ -61,7 +61,7 @@ export default function PaymentCertPage() {
     setNotice(null);
     try {
       const cert = await pc.save({
-        gross: parseFloat(form.gross),
+        net_paid: parseFloat(form.net_paid),
         invoice_date: form.invoice_date,
         bill_month: form.bill_month,
         bill_type: form.bill_type,
@@ -69,7 +69,7 @@ export default function PaymentCertPage() {
         other_deduction_note: form.other_deduction_note,
         allow_overrun: allowOverrun,
       });
-      setForm((f) => ({ ...f, gross: '', other_deduction: '', other_deduction_note: '' }));
+      setForm((f) => ({ ...f, net_paid: '', other_deduction: '', other_deduction_note: '' }));
       setNotice(`Saved as Bill No. ${cert.cert_no} — ${cert.ref_number}`);
     } catch (err) {
       setSaveError(err.message);
@@ -256,17 +256,18 @@ export default function PaymentCertPage() {
                 </div>
 
                 <div className="mt-4">
-                  <label className="input-label">Amount this month (including VAT)</label>
+                  <label className="input-label">Net amount to pay this month</label>
                   <input
                     type="number"
                     step="0.01"
                     className="input-field text-lg font-semibold"
-                    value={form.gross}
-                    onChange={(e) => set('gross', e.target.value)}
-                    placeholder="52500.00"
+                    value={form.net_paid}
+                    onChange={(e) => set('net_paid', e.target.value)}
+                    placeholder="15000.00"
                   />
                   <p className="text-xs text-slate-400 mt-1">
-                    Enter the total as invoiced. VAT and retention are worked out below.
+                    The cash the subcontractor actually receives. Certified value, retention
+                    and VAT are worked back from this figure.
                   </p>
                 </div>
 
@@ -364,9 +365,9 @@ export default function PaymentCertPage() {
 
                     {calc.retention_amount > 0 && (
                       <p className="mt-3 text-[11px] text-slate-400 leading-relaxed">
-                        VAT is charged after retention. The invoice contains {money(calc.vat_portion)} VAT;
-                        the {money(calc.vat_portion - calc.vat_charged)} difference falls due when the
-                        retention is released.
+                        VAT is charged after retention. VAT on the full certified value is
+                        {' '}{money(calc.vat_portion)}; the {money(calc.vat_portion - calc.vat_charged)} difference
+                        falls due when the retention is released.
                       </p>
                     )}
 
