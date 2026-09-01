@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { HiDocumentText, HiUpload, HiPlus, HiTrash, HiDownload, HiPencil, HiX, HiRefresh, HiLocationMarker } from 'react-icons/hi';
+import { HiDocumentText, HiUpload, HiPlus, HiTrash, HiDownload, HiPencil, HiX, HiRefresh, HiLocationMarker, HiClock } from 'react-icons/hi';
 import PageHeader from '../components/PageHeader';
 
-const API = `${import.meta.env.VITE_API_BASE_URL || '/api'}/lpo-gen`;
+import { API_BASE } from '../services/apiBase';
+
+const API = `${API_BASE}/lpo-gen`;
 
 const PREDEFINED_SITES = [
   {
@@ -45,14 +47,47 @@ const emptyLpo = (lpoNumber) => ({
   paymentTerms: '90 DAYS PDC',
   vendor: { name: '', contact: '', email: '', phone: '', address: '', trn: '' },
   lineItems: [{ description: '', quantity: 1, unit: 'Nos', unitPrice: 0, totalPrice: 0 }],
+  // How the order is priced: 'unit' (Qty x rate), 'total' (a figure per line)
+  // or 'lump' (one figure for the whole order). Drives both the form columns
+  // and the PDF columns — see pdf_generator.generate_lpo.
+  pricingMode: 'unit',
+  discount: 0,
   vatPercent: 5,
+  // Lump-sum override: type either the ex-VAT Subtotal or the VAT-inclusive
+  // TOTAL and the rest is derived from it. null = derive from the line items.
+  override: null,   // { basis: 'subtotal' | 'total', value: '15750' }
+  extraTerms: [],
   notes: '',
 });
 
-function calcTotals(lineItems, vatPercent) {
-  const subtotal = lineItems.reduce((s, i) => s + (parseFloat(i.totalPrice) || 0), 0);
-  const vatAmount = subtotal * (parseFloat(vatPercent) || 0) / 100;
-  return { subtotal, vatAmount, total: subtotal + vatAmount };
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// Mirrors the totals maths in pdf_generator.generate_lpo — if you change one,
+// change the other, or the screen and the PDF will disagree.
+function calcTotals(lineItems, vatPercent, discount, override, pricingMode) {
+  // A lump-sum order has no per-line money, so its value is the override alone.
+  const lineSum = pricingMode === 'lump'
+    ? 0
+    : lineItems.reduce((s, i) => s + (parseFloat(i.totalPrice) || 0), 0);
+  const rate = (parseFloat(vatPercent) || 0) / 100;
+  const ov = override && parseFloat(override.value);
+  const active = ov > 0 ? override.basis : null;
+
+  if (active === 'total') {
+    // Worked backwards from the figure typed, like a payment certificate: the
+    // bottom line is exactly what the office entered, to the cent.
+    const total = round2(ov);
+    const net = round2(total / (1 + rate));
+    const vatAmount = round2(total - net);
+    const disc = Math.max(parseFloat(discount) || 0, 0);
+    return { lineSum, subtotal: round2(net + disc), discount: disc, net, vatAmount, total, basis: 'total' };
+  }
+
+  const subtotal = active === 'subtotal' ? round2(ov) : lineSum;
+  const disc = Math.min(Math.max(parseFloat(discount) || 0, 0), subtotal);
+  const net = subtotal - disc;
+  const vatAmount = net * rate;
+  return { lineSum, subtotal, discount: disc, net, vatAmount, total: net + vatAmount, basis: active };
 }
 
 // ── Site Manager Modal ────────────────────────────────────────────────────────
@@ -110,14 +145,148 @@ function SiteModal({ sites, onClose, onAdd, onDelete, onSelect }) {
   );
 }
 
+// ── History Panel ─────────────────────────────────────────────────────────────
+function LPOHistoryPanel({ onClose, onEdit }) {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
+      const res = await fetch(`${API}/records?${params.toString()}`);
+      const d = await res.json();
+      if (d.success) {
+        setRecords(d.records);
+      } else {
+        setError(d.error || 'Could not load LPO history');
+      }
+    } catch (e) {
+      setError(e.message || 'Could not load LPO history');
+    } finally {
+      setLoading(false);
+    }
+  }, [search, dateFrom, dateTo]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const deleteRecord = async (record) => {
+    if (!window.confirm(`Delete LPO ${record.lpo_number}? This cannot be undone.`)) return;
+    const res = await fetch(`${API}/records/${record.id}`, { method: 'DELETE' });
+    const d = await res.json();
+    if (d.success) setRecords(prev => prev.filter(r => r.id !== record.id));
+  };
+
+  const downloadRecord = async (record) => {
+    const res = await fetch(`${API}/records/${record.id}/pdf`);
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${record.lpo_number}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
+      <div className="bg-white w-full max-w-2xl h-full shadow-2xl flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-slate-200">
+          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <HiClock className="text-blue-500" /> LPO History
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <HiX className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input
+            className="input-field sm:col-span-1"
+            placeholder="Search supplier, project, LPO no..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          <input type="date" className="input-field" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          <input type="date" className="input-field" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {loading && <div className="text-sm text-slate-400 text-center py-8">Loading...</div>}
+          {!loading && error && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg text-center py-3 px-4">{error}</div>
+          )}
+          {!loading && !error && records.length === 0 && (
+            <div className="text-sm text-slate-400 text-center py-8">No records found</div>
+          )}
+          {!loading && !error && records.map(r => (
+            <div key={r.id} className="bg-slate-50 rounded-lg p-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-mono font-bold text-sm text-slate-800">{r.lpo_number}</div>
+                <div className="text-sm text-slate-600 truncate">{r.supplier_name}</div>
+                <div className="text-xs text-slate-400 truncate">{r.project}</div>
+                <div className="text-xs text-slate-400">{r.lpo_date}</div>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="font-medium text-slate-700 text-sm">
+                  AED {(parseFloat(r.total_amount) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                </span>
+                <button onClick={() => downloadRecord(r)} title="Download" className="text-blue-500 hover:text-blue-700">
+                  <HiDownload className="w-4 h-4" />
+                </button>
+                <button onClick={() => onEdit(r)} title="Edit" className="text-slate-500 hover:text-slate-700">
+                  <HiPencil className="w-4 h-4" />
+                </button>
+                <button onClick={() => deleteRecord(r)} title="Delete" className="text-red-400 hover:text-red-600">
+                  <HiTrash className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Line Items Table ──────────────────────────────────────────────────────────
-function LineItemsTable({ items, onChange }) {
+// Every cell is editable. The boxes are drawn (not borderless) because the
+// transparent version read as plain text and nobody realised they could type in
+// Unit / Rate / Total at all.
+const CELL = 'w-full border border-slate-200 rounded bg-white px-1.5 py-1 text-sm ' +
+             'focus:border-blue-400 focus:ring-1 focus:ring-blue-300 outline-none';
+
+const PRICING_MODES = [
+  { key: 'unit',  label: 'Unit price', hint: 'Type Qty and a rate per unit — the line Total is Qty x rate.' },
+  { key: 'total', label: 'Line total', hint: 'Type one figure per line. No unit rate is printed.' },
+  { key: 'lump',  label: 'Lump sum',   hint: 'Descriptions only. One figure for the whole order, entered under Totals.' },
+];
+
+function LineItemsTable({ items, onChange, mode }) {
+  const showPrices = mode !== 'lump';
+  const showRate   = mode === 'unit';
+
   const update = (idx, field, val) => {
     const updated = items.map((item, i) => {
       if (i !== idx) return item;
       const next = { ...item, [field]: val };
       if (field === 'quantity' || field === 'unitPrice') {
         next.totalPrice = (parseFloat(next.quantity) || 0) * (parseFloat(next.unitPrice) || 0);
+      } else if (field === 'totalPrice') {
+        // The line Total is typeable too (a lump-sum service line is usually
+        // quoted as one figure). Typing it back-solves the Rate so the printed
+        // Qty x Rate still ties to the Total column.
+        const qty = parseFloat(next.quantity) || 0;
+        next.unitPrice = qty ? Math.round(((parseFloat(val) || 0) / qty) * 100) / 100 : 0;
       }
       return next;
     });
@@ -135,10 +304,10 @@ function LineItemsTable({ items, onChange }) {
             <tr>
               <th className="py-2 px-3 text-center w-8">#</th>
               <th className="py-2 px-3 text-left">Description</th>
-              <th className="py-2 px-3 text-center w-20">Qty</th>
-              <th className="py-2 px-3 text-center w-20">Unit</th>
-              <th className="py-2 px-3 text-right w-28">Unit Price</th>
-              <th className="py-2 px-3 text-right w-28">Total</th>
+              {showPrices && <th className="py-2 px-3 text-center w-20">Qty</th>}
+              {showPrices && <th className="py-2 px-3 text-center w-20">Unit</th>}
+              {showRate && <th className="py-2 px-3 text-right w-28">Unit Price</th>}
+              {showPrices && <th className="py-2 px-3 text-right w-28">Total</th>}
               <th className="py-2 px-1 w-8"></th>
             </tr>
           </thead>
@@ -148,41 +317,65 @@ function LineItemsTable({ items, onChange }) {
                 <td className="py-1 px-3 text-center text-slate-500">{i + 1}</td>
                 <td className="py-1 px-2">
                   <input
-                    className="w-full border-0 bg-transparent focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 text-sm"
+                    className={CELL}
                     value={item.description}
                     onChange={e => update(i, 'description', e.target.value)}
                     placeholder="Item description..."
                   />
                 </td>
-                <td className="py-1 px-2">
-                  <input
-                    type="number"
-                    className="w-full border-0 bg-transparent focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 text-sm text-center"
-                    value={item.quantity}
-                    onChange={e => update(i, 'quantity', e.target.value)}
-                    min="0"
-                  />
-                </td>
-                <td className="py-1 px-2">
-                  <input
-                    className="w-full border-0 bg-transparent focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 text-sm text-center"
-                    value={item.unit}
-                    onChange={e => update(i, 'unit', e.target.value)}
-                  />
-                </td>
-                <td className="py-1 px-2">
-                  <input
-                    type="number"
-                    className="w-full border-0 bg-transparent focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 text-sm text-right"
-                    value={item.unitPrice}
-                    onChange={e => update(i, 'unitPrice', e.target.value)}
-                    min="0"
-                    step="0.01"
-                  />
-                </td>
-                <td className="py-1 px-3 text-right font-medium text-slate-700">
-                  {(parseFloat(item.totalPrice) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
-                </td>
+                {showPrices && (
+                  <td className="py-1 px-2">
+                    <input
+                      type="number"
+                      className={`${CELL} text-center`}
+                      value={item.quantity}
+                      onChange={e => update(i, 'quantity', e.target.value)}
+                      min="0"
+                    />
+                  </td>
+                )}
+                {showPrices && (
+                  <td className="py-1 px-2">
+                    <input
+                      className={`${CELL} text-center`}
+                      value={item.unit}
+                      onChange={e => update(i, 'unit', e.target.value)}
+                      placeholder="Nos"
+                    />
+                  </td>
+                )}
+                {showRate && (
+                  <td className="py-1 px-2">
+                    <input
+                      type="number"
+                      className={`${CELL} text-right`}
+                      value={item.unitPrice}
+                      onChange={e => update(i, 'unitPrice', e.target.value)}
+                      min="0"
+                      step="0.01"
+                    />
+                  </td>
+                )}
+                {showPrices && (
+                  <td className="py-1 px-2">
+                    {/* In unit-price mode the Total is Qty x rate, so it is shown,
+                        not typed — typing it there would fight the rate. */}
+                    {showRate ? (
+                      <div className="px-1.5 py-1 text-right font-medium text-slate-700">
+                        {(parseFloat(item.totalPrice) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                      </div>
+                    ) : (
+                      <input
+                        type="number"
+                        className={`${CELL} text-right font-medium`}
+                        value={item.totalPrice}
+                        onChange={e => update(i, 'totalPrice', e.target.value)}
+                        min="0"
+                        step="0.01"
+                      />
+                    )}
+                  </td>
+                )}
                 <td className="py-1 px-1">
                   {items.length > 1 && (
                     <button onClick={() => removeRow(i)} className="text-red-400 hover:text-red-600">
@@ -211,6 +404,8 @@ export default function LPOPage() {
   const [selectedSiteKey, setSelectedSiteKey] = useState('');
   const [sites, setSites] = useState([]);
   const [showSiteModal, setShowSiteModal] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [extracting, setExtracting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
@@ -279,7 +474,10 @@ export default function LPOPage() {
           totalPrice: li.total_price || 0,
         })),
         quoteRef: d.quotation_number || '',
+        discount: d.discount || 0,
         vatPercent: d.vat_percent || 5,
+        pricingMode: 'unit',
+        override: null,   // a fresh quotation starts from its own line items
         paymentTerms: d.payment_terms || '90 DAYS PDC',
         notes: d.notes || '',
       }));
@@ -314,6 +512,8 @@ export default function LPOPage() {
     setGenerating(true);
     setError(null);
     try {
+      const ovValue = parseFloat(lpo.override && lpo.override.value) || 0;
+      const ovBasis = ovValue > 0 ? lpo.override.basis : null;
       const payload = {
         lpo: {
           lpo_id: lpo.lpoNumber,
@@ -325,6 +525,12 @@ export default function LPOPage() {
           delivery_phone: lpo.deliveryPhone,
           payment_terms: lpo.paymentTerms,
           vat_percent: parseFloat(lpo.vatPercent) || 5,
+          discount: parseFloat(lpo.discount) || 0,
+          pricing_mode: PRICING_MODES.some(m => m.key === lpo.pricingMode) ? lpo.pricingMode : 'unit',
+          subtotal_override: ovBasis === 'subtotal' ? ovValue : null,
+          total_override: ovBasis === 'total' ? ovValue : null,
+          extra_terms: (lpo.extraTerms || []).map(t => (t || '').trim()).filter(Boolean),
+          notes: lpo.notes,
         },
         supplier: {
           name: lpo.vendor.name,
@@ -341,11 +547,12 @@ export default function LPOPage() {
           unit_price: parseFloat(li.unitPrice) || 0,
           total_price: parseFloat(li.totalPrice) || 0,
         })),
-        notes: lpo.notes,
       };
 
-      const res = await fetch(`${API}/pdf`, {
-        method: 'POST',
+      const url = editingId ? `${API}/records/${editingId}` : `${API}/pdf`;
+      const method = editingId ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -356,17 +563,25 @@ export default function LPOPage() {
       }
 
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const dlUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
+      a.href = dlUrl;
       a.download = `${lpo.lpoNumber}.pdf`;
       a.click();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(dlUrl);
 
-      // Load next number for next LPO
-      const numRes = await fetch(`${API}/next-number`);
-      const numData = await numRes.json();
-      if (numData.success) setLpo(prev => ({ ...prev, lpoNumber: numData.lpo_number }));
+      if (editingId) {
+        // Saved an edit to a past record — exit edit mode and return to a fresh form.
+        setEditingId(null);
+        const numRes = await fetch(`${API}/next-number`);
+        const numData = await numRes.json();
+        if (numData.success) setLpo(emptyLpo(numData.lpo_number));
+      } else {
+        // Load next number for next LPO
+        const numRes = await fetch(`${API}/next-number`);
+        const numData = await numRes.json();
+        if (numData.success) setLpo(prev => ({ ...prev, lpoNumber: numData.lpo_number }));
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -381,13 +596,65 @@ export default function LPOPage() {
     setError(null);
   };
 
+  const cancelEdit = async () => {
+    setEditingId(null);
+    await resetForm();
+  };
+
+  const startEdit = async (record) => {
+    const res = await fetch(`${API}/records/${record.id}`);
+    const d = await res.json();
+    if (!d.success) { setError(d.error || 'Could not load record'); return; }
+    const r = d.record;
+    setLpo({
+      lpoNumber: r.lpo_number || '',
+      lpoDate: r.lpo_date || today(),
+      quoteRef: r.quote_ref || '',
+      project: r.project || '',
+      site: r.delivery_site || '',
+      deliveryContact: r.delivery_contact || '',
+      deliveryPhone: r.delivery_phone || '',
+      paymentTerms: r.payment_terms == null ? '90 DAYS PDC' : r.payment_terms,
+      vendor: {
+        name: r.supplier_name || '', contact: r.supplier_contact || '', email: r.supplier_email || '',
+        phone: r.supplier_phone || '', address: r.supplier_address || '', trn: r.supplier_trn || '',
+      },
+      lineItems: (r.line_items || []).map(li => ({
+        description: li.description || '', quantity: li.quantity || 0, unit: li.unit || 'Nos',
+        unitPrice: li.unit_price || 0, totalPrice: li.total_price || 0,
+      })),
+      discount: parseFloat(r.discount) || 0,
+      vatPercent: r.vat_percent == null ? 5 : parseFloat(r.vat_percent),
+      pricingMode: r.pricing_mode || 'unit',
+      override: parseFloat(r.total_override) > 0 ? { basis: 'total', value: String(r.total_override) }
+              : parseFloat(r.subtotal_override) > 0 ? { basis: 'subtotal', value: String(r.subtotal_override) }
+              : null,
+      extraTerms: r.extra_terms || [],
+      notes: r.notes || '',
+    });
+    setEditingId(record.id);
+    setShowHistory(false);
+    setExtracted(false);
+    setError(null);
+  };
+
   if (!lpo) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
     </div>
   );
 
-  const { subtotal, vatAmount, total } = calcTotals(lpo.lineItems, lpo.vatPercent);
+  // Anything unrecognised (an older record, a hand-edited row) falls back to
+  // the original Qty x Rate layout rather than blowing up the page.
+  const pricingMode = PRICING_MODES.some(m => m.key === lpo.pricingMode) ? lpo.pricingMode : 'unit';
+  const { lineSum, subtotal, discount, net, vatAmount, total, basis } =
+    calcTotals(lpo.lineItems, lpo.vatPercent, lpo.discount, lpo.override, pricingMode);
+  // A lump-sum LPO is worth nothing until the one figure is typed.
+  const missingLumpSum = pricingMode === 'lump' && !(total > 0);
+  // Typing in Subtotal or TOTAL sets that one as the basis and releases the
+  // other — two lump sums at once would just contradict each other.
+  const setOverride = (b, value) => setField('override', value === '' ? null : { basis: b, value });
+  const overrideValue = (b) => (lpo.override && lpo.override.basis === b ? lpo.override.value : '');
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -395,7 +662,7 @@ export default function LPOPage() {
         title="LPO Generator"
         subtitle="Local Purchase Orders"
         icon={HiDocumentText}
-        onAction={resetForm}
+        onAction={cancelEdit}
         actionLabel="New LPO"
         actionIcon={HiRefresh}
       />
@@ -410,7 +677,31 @@ export default function LPOPage() {
         />
       )}
 
+      {showHistory && (
+        <LPOHistoryPanel
+          onClose={() => setShowHistory(false)}
+          onEdit={startEdit}
+        />
+      )}
+
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        <div className="flex justify-end -mb-2">
+          <button
+            onClick={() => setShowHistory(true)}
+            className="flex items-center gap-1 text-sm text-slate-600 hover:text-blue-600 font-medium"
+          >
+            <HiClock className="w-4 h-4" /> History
+          </button>
+        </div>
+
+        {/* Editing banner */}
+        {editingId && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between text-sm text-blue-800">
+            <span>Editing <strong>{lpo.lpoNumber}</strong></span>
+            <button onClick={cancelEdit} className="text-blue-600 hover:text-blue-800 font-medium">Cancel Edit</button>
+          </div>
+        )}
 
         {/* Error banner */}
         {error && (
@@ -466,9 +757,11 @@ export default function LPOPage() {
             <div>
               <label className="input-label">LPO Number</label>
               <input
-                className="input-field font-mono font-bold"
+                className={`input-field font-mono font-bold ${editingId ? 'bg-slate-50' : ''}`}
                 value={lpo.lpoNumber}
                 onChange={e => setField('lpoNumber', e.target.value)}
+                readOnly={!!editingId}
+                title={editingId ? 'LPO Number is locked while editing — it identifies the saved record and cannot be changed.' : undefined}
               />
             </div>
             <div>
@@ -575,11 +868,73 @@ export default function LPOPage() {
 
         {/* Line Items */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">Line Items</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Line Items</h2>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">Priced by</span>
+              <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+                {PRICING_MODES.map(m => (
+                  <button
+                    key={m.key}
+                    onClick={() => setField('pricingMode', m.key)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      pricingMode === m.key
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 mb-3">
+            {PRICING_MODES.find(m => m.key === pricingMode).hint}
+          </p>
           <LineItemsTable
             items={lpo.lineItems}
             onChange={items => setLpo(prev => ({ ...prev, lineItems: items }))}
+            mode={pricingMode}
           />
+        </div>
+
+        {/* Terms & Conditions */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Terms &amp; Conditions</h2>
+          <p className="text-xs text-slate-400 mb-3">
+            Standard points (Delivery, Contact, Payment Terms, Original tax invoice) are added automatically.
+            Add any extra points below — they appear after the standard ones, numbered in order.
+          </p>
+          <div className="space-y-2">
+            {(lpo.extraTerms || []).map((term, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 w-5 text-right">{i + 1}.</span>
+                <input
+                  className="input-field flex-1"
+                  value={term}
+                  onChange={e => setLpo(prev => ({
+                    ...prev,
+                    extraTerms: prev.extraTerms.map((t, j) => (j === i ? e.target.value : t)),
+                  }))}
+                  placeholder="e.g. Warranty: 12 months from handover..."
+                />
+                <button
+                  onClick={() => setLpo(prev => ({ ...prev, extraTerms: prev.extraTerms.filter((_, j) => j !== i) }))}
+                  className="text-red-400 hover:text-red-600"
+                  title="Remove point"
+                >
+                  <HiTrash className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => setLpo(prev => ({ ...prev, extraTerms: [...(prev.extraTerms || []), ''] }))}
+            className="mt-2 flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            <HiPlus className="w-4 h-4" /> Add Point
+          </button>
         </div>
 
         {/* Totals + Notes */}
@@ -599,10 +954,45 @@ export default function LPOPage() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">Totals</h2>
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between text-slate-600">
-                <span>Subtotal</span>
+              <div className="flex justify-between items-center text-slate-600">
+                <span className="flex items-center gap-2">
+                  Subtotal
+                  <input
+                    type="number"
+                    className={`w-24 border rounded px-1 py-0.5 text-xs text-right ${basis === 'subtotal' ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}
+                    value={overrideValue('subtotal')}
+                    onChange={e => setOverride('subtotal', e.target.value)}
+                    min="0"
+                    step="0.01"
+                    placeholder="auto"
+                    title="Type an ex-VAT lump sum to override the line items"
+                  />
+                </span>
                 <span className="font-medium">AED {subtotal.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</span>
               </div>
+              <div className="flex justify-between items-center text-slate-600">
+                <span className="flex items-center gap-2">
+                  Discount (AED)
+                  <input
+                    type="number"
+                    className="w-24 border border-slate-200 rounded px-1 py-0.5 text-xs text-right"
+                    value={lpo.discount}
+                    onChange={e => setField('discount', e.target.value)}
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                  />
+                </span>
+                <span className="font-medium text-red-600">
+                  {discount > 0 ? `- AED ${discount.toLocaleString('en-AE', { minimumFractionDigits: 2 })}` : 'AED 0.00'}
+                </span>
+              </div>
+              {discount > 0 && (
+                <div className="flex justify-between text-slate-600 border-t border-slate-100 pt-2">
+                  <span>Net</span>
+                  <span className="font-medium">AED {net.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</span>
+                </div>
+              )}
               <div className="flex justify-between items-center text-slate-600">
                 <span className="flex items-center gap-2">
                   VAT
@@ -614,14 +1004,57 @@ export default function LPOPage() {
                     min="0"
                     max="100"
                   />
-                  %
+                  % (on net)
                 </span>
                 <span className="font-medium">AED {vatAmount.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</span>
               </div>
-              <div className="flex justify-between text-slate-800 font-bold text-base border-t border-slate-200 pt-2 mt-2">
-                <span>TOTAL</span>
+              <div className="flex justify-between items-center text-slate-800 font-bold text-base border-t border-slate-200 pt-2 mt-2">
+                <span className="flex items-center gap-2">
+                  TOTAL
+                  <input
+                    type="number"
+                    className={`w-28 border rounded px-1 py-0.5 text-xs text-right font-normal ${basis === 'total' ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}
+                    value={overrideValue('total')}
+                    onChange={e => setOverride('total', e.target.value)}
+                    min="0"
+                    step="0.01"
+                    placeholder="auto"
+                    title="Type the final VAT-inclusive figure — Subtotal and VAT are worked backwards from it"
+                  />
+                </span>
                 <span>AED {total.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</span>
               </div>
+              {missingLumpSum && (
+                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-2">
+                  This is a lump-sum LPO — type the order value into Subtotal (ex-VAT)
+                  or TOTAL (VAT-inclusive) above before generating the PDF.
+                </div>
+              )}
+              {basis && !missingLumpSum && (
+                <div className={`flex items-start justify-between gap-2 text-xs rounded px-2 py-1.5 mt-2 ${
+                  pricingMode === 'lump'
+                    ? 'text-slate-500 bg-slate-50 border border-slate-200'
+                    : 'text-amber-700 bg-amber-50 border border-amber-200'
+                }`}>
+                  <span>
+                    {basis === 'total'
+                      ? 'TOTAL is fixed at the figure you typed; Subtotal and VAT are worked backwards from it.'
+                      : 'Subtotal is fixed at the figure you typed.'}
+                    {/* Only worth flagging a mismatch when the lines carry money
+                        at all — a lump-sum order's lines never do. */}
+                    {pricingMode !== 'lump' &&
+                      ` Line items add up to AED ${lineSum.toLocaleString('en-AE', { minimumFractionDigits: 2 })}.`}
+                  </span>
+                  {pricingMode !== 'lump' && (
+                    <button
+                      onClick={() => setField('override', null)}
+                      className="shrink-0 font-medium text-amber-800 hover:underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -630,11 +1063,13 @@ export default function LPOPage() {
         <div className="flex justify-end pb-8">
           <button
             onClick={generatePDF}
-            disabled={generating || !lpo.vendor.name}
+            disabled={generating || !lpo.vendor.name || missingLumpSum}
             className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-semibold rounded-xl shadow-sm transition-colors text-sm"
           >
             {generating ? (
-              <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> Generating...</>
+              <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> {editingId ? 'Saving...' : 'Generating...'}</>
+            ) : editingId ? (
+              <><HiDownload className="w-5 h-5" /> Save Changes</>
             ) : (
               <><HiDownload className="w-5 h-5" /> Generate LPO PDF</>
             )}
