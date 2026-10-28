@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { HiTrash, HiPrinter, HiDocumentDownload, HiExclamationCircle } from 'react-icons/hi';
 import LineItemsTable from './LineItemsTable';
-import AutoSaveIndicator from './AutoSaveIndicator';
-import { useAutoSave } from '../hooks/useAutoSave';
 import { bpvApi } from '../services/api';
 
 export default function VoucherForm({ voucher, onSave, onDelete, onClose, suggestedBpvNo, vouchers = [] }) {
-  const isNew = !voucher?.id;
+  // An edit always receives a voucher object; a new voucher receives null.
+  // Do NOT key this on voucher.id — an optimistic update can transiently drop
+  // the id, which used to flip Edit into Create and duplicate the voucher.
+  const isNew = !voucher;
+  // Stable key for updates: the backend routes PUT /api/bpv/<bpvNo> on bpv_no.
+  const voucherKey = voucher?.bpvNo ?? voucher?.id;
   const [saveError, setSaveError] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   // Extract unique suggestions from all vouchers
   const companySuggestions = useMemo(() => {
@@ -73,23 +77,8 @@ export default function VoucherForm({ voucher, onSave, onDelete, onClose, sugges
     }, 0);
   }, [formData.lineItems]);
 
-  // Auto-save hook
-  const saveFunction = async (data) => {
-    if (isNew) {
-      // For new vouchers, don't auto-save - wait for manual save
-      return;
-    }
-    await onSave(voucher.id, { ...data, totalAmount });
-  };
-
-  const { status: saveStatus, save } = useAutoSave(saveFunction, 1000);
-
-  // Trigger auto-save on form changes (only for existing vouchers)
-  useEffect(() => {
-    if (!isNew && formData.bpvNo) {
-      save(formData);
-    }
-  }, [formData, isNew, save]);
+  // No auto-save: the user saves explicitly with the button. This is the only
+  // write path, so there is never more than one in-flight write per voucher.
 
   const handleFieldChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -100,7 +89,9 @@ export default function VoucherForm({ voucher, onSave, onDelete, onClose, sugges
   };
 
   const handleSave = async () => {
+    if (saving) return; // guard against double-submit
     setSaveError(null);
+    setSaving(true);
     const dataToSave = { ...formData, totalAmount };
 
     try {
@@ -108,7 +99,7 @@ export default function VoucherForm({ voucher, onSave, onDelete, onClose, sugges
       if (isNew) {
         result = await onSave(null, dataToSave);
       } else {
-        result = await onSave(voucher.id, dataToSave);
+        result = await onSave(voucherKey, dataToSave);
       }
 
       if (result && !result.success) {
@@ -118,6 +109,8 @@ export default function VoucherForm({ voucher, onSave, onDelete, onClose, sugges
       onClose();
     } catch (err) {
       setSaveError(err.message || 'Error saving voucher');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -144,13 +137,6 @@ export default function VoucherForm({ voucher, onSave, onDelete, onClose, sugges
         </div>
       )}
 
-      {/* Auto-save indicator for existing vouchers */}
-      {!isNew && (
-        <div className="flex justify-end">
-          <AutoSaveIndicator status={saveStatus} />
-        </div>
-      )}
-
       {/* Header Fields */}
       <div className="grid grid-cols-2 gap-4">
         <div>
@@ -160,7 +146,9 @@ export default function VoucherForm({ voucher, onSave, onDelete, onClose, sugges
             value={formData.bpvNo}
             onChange={(e) => handleFieldChange('bpvNo', e.target.value)}
             placeholder="e.g., 31"
-            className="input-field"
+            readOnly={!isNew}
+            title={!isNew ? 'BPV number cannot be changed after creation' : undefined}
+            className={`input-field ${!isNew ? 'bg-slate-100 cursor-not-allowed' : ''}`}
           />
         </div>
         <div>
@@ -231,9 +219,10 @@ export default function VoucherForm({ voucher, onSave, onDelete, onClose, sugges
       <div className="flex flex-wrap gap-3 pt-4 border-t border-slate-200">
         <button
           onClick={handleSave}
-          className="btn-gradient-green flex-1"
+          disabled={saving}
+          className="btn-gradient-green flex-1 disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          {isNew ? 'Create Voucher' : 'Save Changes'}
+          {saving ? 'Saving…' : (isNew ? 'Create Voucher' : 'Save Changes')}
         </button>
 
         {!isNew && (

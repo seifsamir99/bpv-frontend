@@ -6,35 +6,14 @@ import AddChequeModal from '../components/AddChequeModal';
 import axios from 'axios';
 import { bpvApi } from '../services/api';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+import { API_BASE as API_BASE_URL } from '../services/apiBase';
+import { parseChequeDate as parseDate } from '../utils/chequeDate';
 
 // Status options with colors - CDC uses Pending/Cleared
 const STATUS_OPTIONS = [
   { value: 'Pending', label: 'Pending', color: 'yellow', icon: HiClock },
   { value: 'Cleared', label: 'Cleared', color: 'green', icon: HiCheckCircle },
 ];
-
-// Parse date string - handles both MM/DD/YYYY (Google Sheets) and DD/MM/YYYY formats
-const parseDate = (dateStr) => {
-  if (!dateStr) return null;
-  const parts = dateStr.split('/');
-  if (parts.length === 3) {
-    const first = parseInt(parts[0]);
-    const second = parseInt(parts[1]);
-    const year = parseInt(parts[2]);
-
-    // If first number > 12, it must be DD/MM/YYYY format
-    // Otherwise assume MM/DD/YYYY (Google Sheets default)
-    if (first > 12) {
-      // DD/MM/YYYY
-      return new Date(year, second - 1, first);
-    } else {
-      // MM/DD/YYYY (Google Sheets format)
-      return new Date(year, first - 1, second);
-    }
-  }
-  return null;
-};
 
 // Format date for display
 const formatDate = (dateStr) => {

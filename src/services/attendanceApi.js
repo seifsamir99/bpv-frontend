@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+import { API_BASE as API_BASE_URL } from './apiBase';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -31,6 +31,22 @@ export const attendanceApi = {
   // Mark all non-Sunday days in the month for a single employee
   markAllDays: async (employeeId, status, type, month, year) => {
     const response = await api.post('/attendance/bulk-all-days', { employeeId, status, type, month, year });
+    return response.data;
+  },
+
+  // Mark all non-Sunday days in the month for many employees in one atomic query.
+  // employeeIds (optional) limits to those employees (respects UI filters).
+  markAllDaysAllEmployees: async (status, employeeIds, type, month, year) => {
+    const response = await api.post('/attendance/bulk-all-days-all', { status, employeeIds, type, month, year });
+    return response.data;
+  },
+
+  // Set one status from day X to day Y (a leave period, a shutdown).
+  // Sundays are included unless includeSundays is false.
+  markRange: async (fromDay, toDay, status, employeeIds, type, month, year, includeSundays = true) => {
+    const response = await api.post('/attendance/bulk-range', {
+      fromDay, toDay, status, employeeIds, type, month, year, includeSundays,
+    });
     return response.data;
   },
 };

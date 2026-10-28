@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { HiUserGroup, HiPlus, HiSearch, HiFilter, HiPencil, HiTrash, HiX, HiExclamationCircle, HiSwitchHorizontal, HiRefresh } from 'react-icons/hi';
+import { HiUserGroup, HiPlus, HiSearch, HiFilter, HiPencil, HiTrash, HiX, HiExclamationCircle, HiSwitchHorizontal, HiRefresh, HiLink, HiCheck, HiClipboardList, HiLocationMarker } from 'react-icons/hi';
 import axios from 'axios';
 import PageHeader from '../components/PageHeader';
 import SlideOutPanel from '../components/SlideOutPanel';
 import useEmployees from '../hooks/useEmployees';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+import { API_BASE as API_BASE_URL } from '../services/apiBase';
 
 const DESIGNATIONS = [
   'ELECTRICIAN', 'PLUMBER', 'A/C TECHNICIAN', 'Electric foreman', 'Plumber foreman',
@@ -27,6 +27,58 @@ export default function EmployeesPage() {
   const [validationLoading, setValidationLoading] = useState(false);
   const [showWarnings, setShowWarnings] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
+
+  // The check-in page lives on its own separate deployment (bpv-checkin) —
+  // never this domain — so a leaked link can't lead into the accounting app.
+  const CHECKIN_BASE_URL = import.meta.env.VITE_CHECKIN_BASE_URL || 'http://localhost:3010';
+
+  const handleCopyCheckInLink = (employee) => {
+    const link = `${CHECKIN_BASE_URL}/checkin/${employee.checkinToken}`;
+    navigator.clipboard.writeText(link);
+    setCopiedId(employee.employeeId);
+    setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  const handleCopyCrewLink = (employee) => {
+    const link = `${CHECKIN_BASE_URL}/crew/${employee.checkinToken}`;
+    navigator.clipboard.writeText(link);
+    setCopiedId(`crew-${employee.employeeId}`);
+    setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  // Who gets a /checkin/<token> link. Removing it makes the old link stop
+  // opening and drops them from the Time Log roster; adding it back re-uses
+  // the same link (the token is shared with /crew, so it is never rotated).
+  const handleToggleTimeLog = async (employee) => {
+    const on = !employee.timeLogEnabled;
+    if (!window.confirm(on
+      ? `Give ${employee.name} a check-in link?\n\n`
+        + 'They will appear on the Time Log and be auto-marked Absent on days they do not check in.'
+      : `Remove ${employee.name}'s check-in link?\n\n`
+        + 'Their existing link will stop working. Past time entries are kept.')) return;
+    try {
+      await axios.post(`${API_BASE_URL}/employees/${employee.employeeId}/time-log`, { enabled: on });
+      refresh();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Could not change check-in access');
+    }
+  };
+
+  // Who may fill the labour sheet at /crew/<token>. Deliberately independent of
+  // the Time Log check-in flag: foremen mark the crew without being engineers.
+  const handleToggleCrewSheet = async (employee) => {
+    const on = !employee.crewSheetEnabled;
+    if (on && !window.confirm(
+      `Let ${employee.name} fill the labour attendance sheet?\n\n`
+      + 'They will be able to mark Present/Absent, OT hours and site for every labour.')) return;
+    try {
+      await axios.post(`${API_BASE_URL}/employees/${employee.employeeId}/crew-sheet`, { enabled: on });
+      refresh();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Could not change labour sheet access');
+    }
+  };
 
   // Fetch validation issues
   const fetchValidation = async () => {
@@ -120,7 +172,10 @@ export default function EmployeesPage() {
     if (!window.confirm(`Delete employee "${employee.name}" (ID: ${employee.employeeId})?`)) {
       return;
     }
-    await deleteEmployee(employee.employeeId);
+    const res = await deleteEmployee(employee.employeeId);
+    if (!res.success) {
+      alert(res.error || 'Failed to delete employee');
+    }
   };
 
   const handleSave = async (formData) => {
@@ -348,6 +403,60 @@ export default function EmployeesPage() {
                             <HiSwitchHorizontal className="w-4 h-4" />
                           )}
                         </button>
+                        <button
+                          onClick={() => handleToggleTimeLog(employee)}
+                          className={`p-2 rounded-lg transition-colors ${
+                            employee.timeLogEnabled
+                              ? 'text-fuchsia-600 bg-fuchsia-50 hover:bg-fuchsia-100'
+                              : 'text-slate-300 hover:text-fuchsia-600 hover:bg-fuchsia-50'
+                          }`}
+                          title={employee.timeLogEnabled
+                            ? 'Has a check-in link — click to remove it'
+                            : 'Give this person a check-in link'}
+                        >
+                          <HiLocationMarker className="w-4 h-4" />
+                        </button>
+                        {employee.timeLogEnabled && (
+                          <button
+                            onClick={() => handleCopyCheckInLink(employee)}
+                            disabled={!employee.checkinToken}
+                            className="p-2 text-slate-400 hover:text-fuchsia-600 hover:bg-fuchsia-50 rounded-lg transition-colors disabled:opacity-30"
+                            title="Copy Check-in Link"
+                          >
+                            {copiedId === employee.employeeId ? (
+                              <HiCheck className="w-4 h-4 text-emerald-600" />
+                            ) : (
+                              <HiLink className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleToggleCrewSheet(employee)}
+                          className={`p-2 rounded-lg transition-colors ${
+                            employee.crewSheetEnabled
+                              ? 'text-lime-600 bg-lime-50 hover:bg-lime-100'
+                              : 'text-slate-300 hover:text-lime-600 hover:bg-lime-50'
+                          }`}
+                          title={employee.crewSheetEnabled
+                            ? 'Fills the labour attendance sheet — click to remove access'
+                            : 'Let this person fill the labour attendance sheet'}
+                        >
+                          <HiClipboardList className="w-4 h-4" />
+                        </button>
+                        {employee.crewSheetEnabled && (
+                          <button
+                            onClick={() => handleCopyCrewLink(employee)}
+                            disabled={!employee.checkinToken}
+                            className="p-2 text-slate-400 hover:text-lime-600 hover:bg-lime-50 rounded-lg transition-colors disabled:opacity-30"
+                            title="Copy Labour Sheet Link"
+                          >
+                            {copiedId === `crew-${employee.employeeId}` ? (
+                              <HiCheck className="w-4 h-4 text-emerald-600" />
+                            ) : (
+                              <HiLink className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleEditEmployee(employee)}
                           className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"

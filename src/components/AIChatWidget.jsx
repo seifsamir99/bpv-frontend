@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { HiChat, HiX, HiPaperAirplane, HiSparkles } from 'react-icons/hi';
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+import { API_BASE as API_BASE_URL } from '../services/apiBase';
 
 const QUICK_ACTIONS = [
   "What's the total payroll for this month?",

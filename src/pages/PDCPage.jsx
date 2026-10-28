@@ -6,35 +6,14 @@ import AddChequeModal from '../components/AddChequeModal';
 import axios from 'axios';
 import { bpvApi } from '../services/api';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+import { API_BASE as API_BASE_URL } from '../services/apiBase';
+import { parseChequeDate as parseDate } from '../utils/chequeDate';
 
 // Status options with colors
 const STATUS_OPTIONS = [
   { value: 'Not Released', label: 'Not Released', color: 'yellow', icon: HiClock },
   { value: 'Released', label: 'Released', color: 'green', icon: HiCheckCircle },
 ];
-
-// Parse date string - handles both MM/DD/YYYY (new standard) and DD/MM/YYYY (legacy data)
-const parseDate = (dateStr) => {
-  if (!dateStr) return null;
-  const parts = dateStr.split('/');
-  if (parts.length === 3) {
-    const first = parseInt(parts[0]);
-    const second = parseInt(parts[1]);
-    const year = parseInt(parts[2]);
-
-    // If first number > 12, it must be DD/MM/YYYY format (legacy data)
-    // Otherwise assume MM/DD/YYYY (new standard)
-    if (first > 12) {
-      // DD/MM/YYYY (legacy)
-      return new Date(year, second - 1, first);
-    } else {
-      // MM/DD/YYYY (new standard)
-      return new Date(year, first - 1, second);
-    }
-  }
-  return null;
-};
 
 // Format date for display
 const formatDate = (dateStr) => {

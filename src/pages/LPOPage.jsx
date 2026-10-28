@@ -42,8 +42,8 @@ const emptyLpo = (lpoNumber) => ({
   quoteRef: '',
   project: '',
   site: '',
-  deliveryContact: '',
-  deliveryPhone: '',
+  deliveryContact: 'Eng. Nasr',
+  deliveryPhone: '0528663486',
   paymentTerms: '90 DAYS PDC',
   vendor: { name: '', contact: '', email: '', phone: '', address: '', trn: '' },
   lineItems: [{ description: '', quantity: 1, unit: 'Nos', unitPrice: 0, totalPrice: 0 }],
@@ -62,13 +62,19 @@ const emptyLpo = (lpoNumber) => ({
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
+// Qty may be a number or text such as "Per Sqft" (a rate-only line).
+const isNumericQty = (q) => String(q ?? '').trim() !== '' && !isNaN(Number(q));
+const isTextQty = (q) => String(q ?? '').trim() !== '' && !isNumericQty(q);
+
 // Mirrors the totals maths in pdf_generator.generate_lpo — if you change one,
 // change the other, or the screen and the PDF will disagree.
 function calcTotals(lineItems, vatPercent, discount, override, pricingMode) {
   // A lump-sum order has no per-line money, so its value is the override alone.
+  // In unit-price mode a text Qty line ("Per Sqft") has no Total and adds nothing.
   const lineSum = pricingMode === 'lump'
     ? 0
-    : lineItems.reduce((s, i) => s + (parseFloat(i.totalPrice) || 0), 0);
+    : lineItems.reduce((s, i) =>
+        s + (pricingMode === 'unit' && isTextQty(i.quantity) ? 0 : (parseFloat(i.totalPrice) || 0)), 0);
   const rate = (parseFloat(vatPercent) || 0) / 100;
   const ov = override && parseFloat(override.value);
   const active = ov > 0 ? override.basis : null;
@@ -146,7 +152,7 @@ function SiteModal({ sites, onClose, onAdd, onDelete, onSelect }) {
 }
 
 // ── History Panel ─────────────────────────────────────────────────────────────
-function LPOHistoryPanel({ onClose, onEdit }) {
+function LPOHistoryPanel({ onClose, onEdit, signed }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -186,7 +192,7 @@ function LPOHistoryPanel({ onClose, onEdit }) {
   };
 
   const downloadRecord = async (record) => {
-    const res = await fetch(`${API}/records/${record.id}/pdf`);
+    const res = await fetch(`${API}/records/${record.id}/pdf${signed ? '?signed=1' : ''}`);
     if (!res.ok) return;
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -279,14 +285,17 @@ function LineItemsTable({ items, onChange, mode }) {
     const updated = items.map((item, i) => {
       if (i !== idx) return item;
       const next = { ...item, [field]: val };
-      if (field === 'quantity' || field === 'unitPrice') {
-        next.totalPrice = (parseFloat(next.quantity) || 0) * (parseFloat(next.unitPrice) || 0);
-      } else if (field === 'totalPrice') {
+      if (showRate && (field === 'quantity' || field === 'unitPrice')) {
+        next.totalPrice = isNumericQty(next.quantity)
+          ? Number(next.quantity) * (parseFloat(next.unitPrice) || 0)
+          : 0;
+      } else if (field === 'totalPrice' || field === 'quantity') {
         // The line Total is typeable too (a lump-sum service line is usually
         // quoted as one figure). Typing it back-solves the Rate so the printed
-        // Qty x Rate still ties to the Total column.
-        const qty = parseFloat(next.quantity) || 0;
-        next.unitPrice = qty ? Math.round(((parseFloat(val) || 0) / qty) * 100) / 100 : 0;
+        // Qty x Rate still ties to the Total column; in this mode a Qty change
+        // re-solves the Rate rather than overwriting the typed Total.
+        const qty = isNumericQty(next.quantity) ? Number(next.quantity) : 0;
+        next.unitPrice = qty ? Math.round(((parseFloat(next.totalPrice) || 0) / qty) * 100) / 100 : 0;
       }
       return next;
     });
@@ -326,11 +335,12 @@ function LineItemsTable({ items, onChange, mode }) {
                 {showPrices && (
                   <td className="py-1 px-2">
                     <input
-                      type="number"
+                      type="text"
                       className={`${CELL} text-center`}
                       value={item.quantity}
                       onChange={e => update(i, 'quantity', e.target.value)}
-                      min="0"
+                      placeholder="1 / Per Sqft"
+                      title="A number, or text such as Per Sqft for a rate-only line"
                     />
                   </td>
                 )}
@@ -362,7 +372,9 @@ function LineItemsTable({ items, onChange, mode }) {
                         not typed — typing it there would fight the rate. */}
                     {showRate ? (
                       <div className="px-1.5 py-1 text-right font-medium text-slate-700">
-                        {(parseFloat(item.totalPrice) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
+                        {isTextQty(item.quantity)
+                          ? '-'
+                          : (parseFloat(item.totalPrice) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}
                       </div>
                     ) : (
                       <input
@@ -408,6 +420,8 @@ export default function LPOPage() {
   const [editingId, setEditingId] = useState(null);
   const [extracting, setExtracting] = useState(false);
   const [generating, setGenerating] = useState(false);
+  // Print option: stamp Hesham's signature on the PDF, or leave the line blank.
+  const [signed, setSigned] = useState(false);
   const [error, setError] = useState(null);
   const [extracted, setExtracted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -531,6 +545,7 @@ export default function LPOPage() {
           total_override: ovBasis === 'total' ? ovValue : null,
           extra_terms: (lpo.extraTerms || []).map(t => (t || '').trim()).filter(Boolean),
           notes: lpo.notes,
+          signed,
         },
         supplier: {
           name: lpo.vendor.name,
@@ -542,7 +557,7 @@ export default function LPOPage() {
         },
         line_items: lpo.lineItems.map(li => ({
           description: li.description,
-          quantity: parseFloat(li.quantity) || 0,
+          quantity: isTextQty(li.quantity) ? String(li.quantity).trim() : (parseFloat(li.quantity) || 0),
           unit: li.unit,
           unit_price: parseFloat(li.unitPrice) || 0,
           total_price: parseFloat(li.totalPrice) || 0,
@@ -681,6 +696,7 @@ export default function LPOPage() {
         <LPOHistoryPanel
           onClose={() => setShowHistory(false)}
           onEdit={startEdit}
+          signed={signed}
         />
       )}
 
@@ -1060,7 +1076,25 @@ export default function LPOPage() {
         </div>
 
         {/* Generate PDF Button */}
-        <div className="flex justify-end pb-8">
+        <div className="flex flex-wrap items-center justify-end gap-3 pb-8">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">Print</span>
+            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+              {[{ key: false, label: 'Unsigned' }, { key: true, label: 'Signed' }].map(o => (
+                <button
+                  key={o.label}
+                  onClick={() => setSigned(o.key)}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    signed === o.key
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <button
             onClick={generatePDF}
             disabled={generating || !lpo.vendor.name || missingLumpSum}

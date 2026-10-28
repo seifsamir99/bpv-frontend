@@ -27,6 +27,9 @@ export function usePayrollDraft(type, year, month) {
             overrides: parsed.overrides || {},
             selectedIds: parsed.selectedIds || [],
             cashEmployeeIds: parsed.cashEmployeeIds || [],
+            // Extra charges (transfer fee etc.) — absent in drafts saved before
+            // the feature existed, so default to none.
+            extras: parsed.extras || [],
           };
         }
       }
@@ -39,19 +42,20 @@ export function usePayrollDraft(type, year, month) {
   }, [draftKey]);
 
   // Save draft to localStorage (debounced)
-  const saveDraft = useCallback((overrides, selectedIds, cashEmployeeIds = new Set()) => {
+  const saveDraft = useCallback((overrides, selectedIds, cashEmployeeIds = new Set(), extras = []) => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
 
     timeoutRef.current = setTimeout(() => {
       try {
-        const hasChanges = Object.keys(overrides).length > 0 || cashEmployeeIds.size > 0;
+        const hasChanges = Object.keys(overrides).length > 0 || cashEmployeeIds.size > 0 || extras.length > 0;
         if (hasChanges) {
           const data = {
             overrides,
             selectedIds: Array.from(selectedIds),
             cashEmployeeIds: Array.from(cashEmployeeIds),
+            extras,
             savedAt: new Date().toISOString(),
             version: DRAFT_VERSION,
           };

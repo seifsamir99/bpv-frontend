@@ -2,8 +2,14 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { HiClipboardCheck, HiCheck, HiRefresh, HiFilter, HiSearch, HiChevronLeft, HiChevronRight, HiX, HiChevronDown, HiCalendar } from 'react-icons/hi';
 import PageHeader from '../components/PageHeader';
 import useAttendance from '../hooks/useAttendance';
+import getPrevMonth from '../utils/prevMonth';
 
-const DEFAULT_STATUSES = ['Present', 'Absent', 'Leave', 'Off', 'Sick', 'Joined'];
+const DEFAULT_STATUSES = ['Present', 'Absent', 'Leave', 'Off', 'Sick', 'Joined', 'Resigned', 'Cancelled'];
+
+// Resigned/Cancelled END a man's employment: that day is not paid, and nothing
+// after it counts in this month or any later one. The cut-off itself is worked
+// out by the backend (endDate / endReason / cutoffDay on every /api/attendance
+// record) and applied in payrollCalculation.js.
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -17,6 +23,8 @@ const DEFAULT_STATUS_HEX = {
   Off: '#64748b',
   Sick: '#ea580c',
   Joined: '#2563eb',
+  Resigned: '#7c3aed',
+  Cancelled: '#db2777',
 };
 
 function hexToRgba(hex, alpha) {
@@ -32,6 +40,16 @@ function getLightStyle(hex) {
 
 function getBoldStyle(hex) {
   return { backgroundColor: hex, color: '#ffffff' };
+}
+
+// '2026-08-15' -> '15 Aug 2026'. Parsed by hand: new Date('2026-08-15') is
+// UTC midnight and shifts a day back in negative offsets.
+function formatEndDate(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  const MONTH_ABBRS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${d} ${MONTH_ABBRS[m - 1]} ${y}`;
 }
 
 function StatusDropdown({ currentStatus, statuses, onSelect, onCustom, disabled, statusColors }) {
@@ -100,11 +118,16 @@ function StatusDropdown({ currentStatus, statuses, onSelect, onCustom, disabled,
 
 export default function AttendancePage() {
   const today = new Date();
+  // Salaries run one month behind — open on the previous month (July → June).
+  // The "Today" button still jumps to the real current month/day.
+  const prev = getPrevMonth();
   const [selectedType, setSelectedType] = useState('all');
-  const [selectedMonth, setSelectedMonth] = useState(today.getMonth());
-  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-  const { attendance, loading, error, updateAttendance, markAllAs, markEmployeeAllDays, refresh, autoFillSundays } = useAttendance(selectedType, selectedMonth, selectedYear);
-  const [selectedDay, setSelectedDay] = useState(today.getDate());
+  const [selectedMonth, setSelectedMonth] = useState(prev.month);
+  const [selectedYear, setSelectedYear] = useState(prev.year);
+  const { attendance, loading, error, updateAttendance, markAllAs, markEmployeeAllDays, markAllEmployeesAllDays, markRange, refresh, autoFillSundays } = useAttendance(selectedType, selectedMonth, selectedYear);
+  const [selectedDay, setSelectedDay] = useState(
+    Math.min(today.getDate(), new Date(prev.year, prev.month + 1, 0).getDate())
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDesignation, setFilterDesignation] = useState('');
   const [saving, setSaving] = useState({});
@@ -112,6 +135,10 @@ export default function AttendancePage() {
   const [sundaysFilled, setSundaysFilled] = useState(false);
   const [fillingMessage, setFillingMessage] = useState('');
   const [showBulkDropdown, setShowBulkDropdown] = useState(false);
+  const [bulkScope, setBulkScope] = useState('day'); // 'day' | 'range' | 'month'
+  const [rangeFrom, setRangeFrom] = useState(1);
+  const [rangeTo, setRangeTo] = useState(1);
+  const [rangeIncludeSundays, setRangeIncludeSundays] = useState(true);
   const bulkDropdownRef = useRef(null);
   const [showAllMonthDropdown, setShowAllMonthDropdown] = useState(null); // employeeId or null
 
@@ -226,6 +253,12 @@ export default function AttendancePage() {
     setSundaysFilled(false);
   }, [selectedMonth, selectedYear, selectedType]);
 
+  // A shorter month must not leave the range selects pointing at day 31
+  useEffect(() => {
+    setRangeFrom(f => Math.min(f, daysInMonth));
+    setRangeTo(t => Math.min(t, daysInMonth));
+  }, [daysInMonth]);
+
   useEffect(() => {
     const doAutoFill = async () => {
       if (!loading && attendance.length > 0 && !sundaysFilled) {
@@ -237,10 +270,12 @@ export default function AttendancePage() {
           if (new Date(selectedYear, selectedMonth, d).getDay() === 0) sundays.push(d);
         }
 
+        // Only BLANK Sundays need filling. A Sunday deliberately set to
+        // Leave/Absent is not "to fix" — re-filling it would undo the edit.
         let hasSundaysToFix = false;
         for (const record of attendance) {
           for (const sunday of sundays) {
-            if (record.days?.[sunday]?.toLowerCase() !== 'off') {
+            if (!record.days?.[sunday]?.toString().trim()) {
               hasSundaysToFix = true;
               break;
             }
@@ -288,6 +323,43 @@ export default function AttendancePage() {
     setSaving({});
   };
 
+  // Handle mark all employees for every (non-Sunday) day of the month
+  const handleMarkAllMonth = async (status) => {
+    if (!window.confirm(`Mark all ${filteredAttendance.length} employees as "${status}" for every day in ${monthName} ${selectedYear}? (Sundays stay Off)`)) {
+      return;
+    }
+    setSaving({ all: true });
+    const employeeIds = filteredAttendance.map(record => record.employeeId);
+    const result = await markAllEmployeesAllDays(employeeIds, status);
+    setSaving({});
+    if (!result.success) {
+      window.alert(`Failed to mark all employees: ${result.error}`);
+    }
+  };
+
+  // Mark a span of days — a leave period, a shutdown. Sundays are included by
+  // default here (that is the point: a Sunday inside a leave must not stay a
+  // paid "Off" day), with a checkbox to leave them alone.
+  const handleMarkRange = async (status) => {
+    const lo = Math.min(rangeFrom, rangeTo);
+    const hi = Math.max(rangeFrom, rangeTo);
+    const who = filteredAttendance.length === 1
+      ? filteredAttendance[0].name
+      : `all ${filteredAttendance.length} employees`;
+    if (!window.confirm(
+      `Mark ${who} as "${status}" from ${monthName} ${lo} to ${hi}?`
+      + (rangeIncludeSundays ? '\n\nSundays in this range will also be set.' : '\n\nSundays will be left as they are.'))) {
+      return;
+    }
+    setSaving({ all: true });
+    const employeeIds = filteredAttendance.map(record => record.employeeId);
+    const result = await markRange(lo, hi, status, employeeIds, rangeIncludeSundays);
+    setSaving({});
+    if (!result.success) {
+      window.alert(`Failed to mark the range: ${result.error}`);
+    }
+  };
+
   // Day buttons for quick navigation
   const dayButtons = [];
   for (let i = 1; i <= daysInMonth; i++) {
@@ -303,8 +375,9 @@ export default function AttendancePage() {
     const ring = selectedDay === day ? 'ring-2 ring-purple-600 ring-offset-2 shadow-md' : '';
 
     if (isSingleEmployee) {
-      // Force Off (grey) on Sundays regardless of sheet data
-      const dayStatus = sunday ? 'Off' : (singleEmployeeDays[day] || '');
+      // Sunday falls back to Off only when nothing is recorded — an overridden
+      // Sunday (Leave, Absent) must show its real colour, not grey.
+      const dayStatus = singleEmployeeDays[day] || (sunday ? 'Off' : '');
       const hex = statusColors[dayStatus] || '#94a3b8';
       return {
         className: ring,
@@ -508,21 +581,88 @@ export default function AttendancePage() {
             <div className="flex gap-2">
               <div className="relative" ref={bulkDropdownRef}>
                 <button
-                  onClick={() => !saving.all && !isSunday(selectedDay) && setShowBulkDropdown(!showBulkDropdown)}
-                  disabled={saving.all || isSunday(selectedDay)}
+                  onClick={() => !saving.all && setShowBulkDropdown(!showBulkDropdown)}
+                  disabled={saving.all}
                   className="flex items-center gap-1.5 px-3 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors text-sm font-medium disabled:opacity-50"
                 >
                   Mark All As…
                   <HiChevronDown className={`w-4 h-4 transition-transform ${showBulkDropdown ? 'rotate-180' : ''}`} />
                 </button>
                 {showBulkDropdown && (
-                  <div className="absolute left-0 mt-1 z-50 w-44 bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                  <div className="absolute left-0 mt-1 z-50 w-60 bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                    {/* Scope: one day, a span of days, or the whole month */}
+                    <div className="flex gap-1 px-2 pt-1 pb-2 border-b border-slate-100">
+                      {[
+                        ['day', `Day ${selectedDay}`],
+                        ['range', 'From–To'],
+                        ['month', `All ${monthName}`],
+                      ].map(([scope, label]) => (
+                        <button
+                          key={scope}
+                          onClick={() => {
+                            // Seed the range from the day already selected, so the
+                            // common case (one man, a few days) is two clicks.
+                            if (scope === 'range' && bulkScope !== 'range') {
+                              setRangeFrom(selectedDay);
+                              setRangeTo(selectedDay);
+                            }
+                            setBulkScope(scope);
+                          }}
+                          className={`flex-1 px-1.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                            bulkScope === scope ? 'bg-purple-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {bulkScope === 'range' && (
+                      <div className="px-3 py-2 border-b border-slate-100 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500 w-8">From</span>
+                          <select
+                            value={rangeFrom}
+                            onChange={(e) => setRangeFrom(parseInt(e.target.value))}
+                            className="flex-1 border border-slate-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                          >
+                            {dayButtons.map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                          <span className="text-xs text-slate-500 w-5">to</span>
+                          <select
+                            value={rangeTo}
+                            onChange={(e) => setRangeTo(parseInt(e.target.value))}
+                            className="flex-1 border border-slate-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                          >
+                            {dayButtons.map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={rangeIncludeSundays}
+                            onChange={(e) => setRangeIncludeSundays(e.target.checked)}
+                            className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                          />
+                          Include Sundays
+                        </label>
+                        <p className="text-[11px] text-slate-400 leading-snug">
+                          Applies to the {filteredAttendance.length} employee{filteredAttendance.length === 1 ? '' : 's'} listed below.
+                        </p>
+                      </div>
+                    )}
+
                     {allStatuses.map(status => {
                       const sHex = statusColors[status] || '#a855f7';
                       return (
                         <button
                           key={status}
-                          onClick={() => { setShowBulkDropdown(false); handleMarkAll(status); }}
+                          onClick={() => {
+                            setShowBulkDropdown(false);
+                            if (bulkScope === 'month') handleMarkAllMonth(status);
+                            else if (bulkScope === 'range') handleMarkRange(status);
+                            else handleMarkAll(status);
+                          }}
                           className="w-full text-left px-3 py-1.5 text-sm font-medium rounded-sm transition-colors hover:opacity-80"
                           style={getLightStyle(sHex)}
                         >
@@ -593,9 +733,12 @@ export default function AttendancePage() {
           {/* Mobile-friendly card layout */}
           <div className="divide-y divide-slate-100">
             {filteredAttendance.map(record => {
-              const rawStatus = record.days?.[selectedDay] || '';
-              // Sundays are always Off regardless of sheet data; otherwise normalize casing
-              const currentStatus = isSunday(selectedDay) ? 'Off' : (DEFAULT_STATUSES.find(s => s.toLowerCase() === rawStatus.toLowerCase()) || rawStatus);
+              // Sunday defaults to Off but is NOT locked to it — a man on leave
+              // must not be paid for the Sundays inside the leave (Off counts as
+              // a paid day in payrollCalculation.js, Leave does not).
+              const rawStatus = record.days?.[selectedDay]
+                || (isSunday(selectedDay) ? 'Off' : '');
+              const currentStatus = DEFAULT_STATUSES.find(s => s.toLowerCase() === rawStatus.toLowerCase()) || rawStatus;
               const isSaving = saving[record.employeeId];
 
               return (
@@ -616,6 +759,15 @@ export default function AttendancePage() {
                         }`}>
                           {record.type === 'staff' ? 'Staff' : 'Labour'}
                         </span>
+                        {record.endDate && (
+                          <span
+                            className="text-xs px-1.5 py-0.5 rounded-full font-medium border"
+                            style={getLightStyle(statusColors[record.endReason] || DEFAULT_STATUS_HEX[record.endReason] || '#7c3aed')}
+                            title={`${record.endReason} on ${formatEndDate(record.endDate)} — no pay counted from that day onwards`}
+                          >
+                            {record.endReason} {formatEndDate(record.endDate)}
+                          </span>
+                        )}
                       </div>
                       <span className="text-sm text-slate-500">{record.designation}</span>
                     </div>
@@ -701,7 +853,7 @@ export default function AttendancePage() {
                           statuses={allStatuses}
                           onSelect={(status) => handleStatusChange(record.employeeId, status, record.type)}
                           onCustom={() => setCustomInput(prev => ({ ...prev, [record.employeeId]: '' }))}
-                          disabled={isSaving || isSunday(selectedDay)}
+                          disabled={isSaving}
                           statusColors={statusColors}
                         />
                       )}
@@ -720,7 +872,7 @@ export default function AttendancePage() {
         </div>
 
         {/* Summary Stats */}
-        <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+        <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
           {allStatuses.map(status => {
             const count = filteredAttendance.filter(r => {
               const effective = isSunday(selectedDay) ? 'off' : (r.days?.[selectedDay] || '').toLowerCase();

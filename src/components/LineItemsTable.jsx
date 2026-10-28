@@ -1,6 +1,7 @@
 import React from 'react';
 import { HiPlus, HiMinus } from 'react-icons/hi';
 import AutocompleteInput from './AutocompleteInput';
+import { toDateInputValue, fromDateInputValue, isUnrepresentable } from '../utils/chequeDate';
 
 export default function LineItemsTable({ items, onChange, maxItems = 5, companySuggestions = [], descriptionSuggestions = [] }) {
   const addItem = () => {
@@ -108,13 +109,22 @@ export default function LineItemsTable({ items, onChange, maxItems = 5, companyS
               </div>
               <div>
                 <label className="text-xs text-slate-500">CHQ Date</label>
+                {/* A picker rather than free text: typed dates used to be
+                    ambiguous between day-first and month-first, and any
+                    cheque on the 1st-12th ended up in the wrong month. */}
                 <input
-                  type="text"
-                  value={item.chequeDate}
-                  onChange={(e) => updateItem(index, 'chequeDate', e.target.value)}
-                  placeholder="21/04/2026"
+                  type="date"
+                  value={toDateInputValue(item.chequeDate)}
+                  onChange={(e) => updateItem(index, 'chequeDate', fromDateInputValue(e.target.value))}
                   className="input-field text-sm"
                 />
+                {/* Older rows can hold text no picker can show. Leave the
+                    stored value alone, but say what it is. */}
+                {isUnrepresentable(item.chequeDate) && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    Saved as &ldquo;{item.chequeDate}&rdquo;. Pick a date to correct it.
+                  </p>
+                )}
               </div>
             </div>
 
