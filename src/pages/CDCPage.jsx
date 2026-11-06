@@ -9,7 +9,7 @@ import axios from 'axios';
 import { bpvApi } from '../services/api';
 
 import { API_BASE as API_BASE_URL } from '../services/apiBase';
-import { parseChequeDate as parseDate } from '../utils/chequeDate';
+import { parseChequeDate as parseDate, fromDateInputValue } from '../utils/chequeDate';
 
 // Status options with colors - CDC uses Pending/Cleared
 const STATUS_OPTIONS = [
@@ -22,6 +22,23 @@ const formatDate = (dateStr) => {
   const date = parseDate(dateStr);
   if (!date) return dateStr || '-';
   return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+// Manually added CDCs used to be saved DAY-first (DD/MM/YYYY) while every
+// reader takes MM/DD/YYYY, so a cheque dated 06/11 (6 Nov) showed up in June.
+// Entries without the dateOrder flag are all from that code: swap them to
+// month-first once, flag them, and write them back.
+const migrateManualCdcDates = (list) => {
+  let changed = false;
+  const out = list.map(c => {
+    if (c.dateOrder === 'MDY') return c;
+    changed = true;
+    const parts = String(c.chequeDate || '').split('/');
+    const chequeDate = parts.length === 3 ? `${parts[1]}/${parts[0]}/${parts[2]}` : c.chequeDate;
+    return { ...c, chequeDate, dateOrder: 'MDY' };
+  });
+  if (changed) localStorage.setItem('cdcCheques', JSON.stringify(out));
+  return out;
 };
 
 // Format number as AED currency
@@ -91,7 +108,7 @@ export default function CDCPage() {
       setLoading(true);
 
       // 1. Load standalone CDCs from localStorage (manual entries not from BPV)
-      const standaloneCdcs = JSON.parse(localStorage.getItem('cdcCheques') || '[]');
+      const standaloneCdcs = migrateManualCdcDates(JSON.parse(localStorage.getItem('cdcCheques') || '[]'));
 
       // 2. Fetch BPV-linked CDCs and CDC statuses in parallel
       const [bpvResponse, statusResponse] = await Promise.all([
@@ -299,7 +316,9 @@ export default function CDCPage() {
       bpvDate: '',
       company: chequeData.company,
       chequeNo: chequeData.chequeNo,
-      chequeDate: formatDateForDisplay(chequeData.chequeDate),
+      // Month-first, the order every cheque-date reader expects (utils/chequeDate)
+      chequeDate: fromDateInputValue(chequeData.chequeDate),
+      dateOrder: 'MDY',
       amount: chequeData.amount,
       description: '',
       status: chequeData.status
@@ -339,11 +358,6 @@ export default function CDCPage() {
     await fetchCdcs();
   };
 
-  // Format date from YYYY-MM-DD to DD/MM/YYYY for display
-  const formatDateForDisplay = (dateStr) => {
-    const [year, month, day] = dateStr.split('-');
-    return `${day}/${month}/${year}`;
-  };
 
   // Toggle selection for a single CDC
   const toggleCdcSelection = (chequeNo) => {
