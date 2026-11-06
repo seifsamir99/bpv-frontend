@@ -51,7 +51,9 @@ export function useSupplierLedger(supplierId) {
     refresh: fetchData,
     addSupplier: mutate('post', `${BASE}/suppliers`),
     updateSupplier: (id, body) => mutate('put', `${BASE}/suppliers/${id}`)(body),
-    deleteSupplier: (id) => mutate('delete', `${BASE}/suppliers/${id}`)(),
+    // withRecords also deletes the supplier's invoices and payments
+    deleteSupplier: (id, withRecords) =>
+      mutate('delete', `${BASE}/suppliers/${id}${withRecords ? '?withRecords=1' : ''}`)(),
     addInvoices: mutate('post', `${BASE}/invoices`),
     updateInvoice: (id, body) => mutate('put', `${BASE}/invoices/${id}`)(body),
     deleteInvoice: (id) => mutate('delete', `${BASE}/invoices/${id}`)(),
