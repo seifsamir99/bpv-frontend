@@ -347,7 +347,7 @@ export default function MonthEndPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Employee</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Designation</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">Rate/Day</th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider w-28">
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider w-32 min-w-[7rem]">
                     OT Hours
                     <div className="text-[10px] font-normal normal-case tracking-normal text-slate-400">
                       ×1.25 / <span className="text-violet-500">Sun ×1</span>
@@ -412,15 +412,15 @@ export default function MonthEndPage() {
                         />
                         {/* Sunday OT: hours worked on the rest day, paid at the
                             plain hourly rate (×1) instead of ×1.25. */}
-                        <div className="flex items-center gap-1 mt-1">
-                          <span className="text-[10px] font-semibold text-violet-600 whitespace-nowrap">☀ Sun</span>
+                        <div className="mt-1.5">
+                          <div className="text-[10px] font-semibold text-violet-600 text-center leading-tight mb-0.5">☀ Sunday ×1</div>
                           <input
                             type="number"
                             step="0.5"
                             min="0"
                             value={sundayOtHours}
                             onChange={(e) => handleChange(employee.employeeId, 'sundayOtHours', e.target.value)}
-                            className="w-full min-w-0 px-2 py-0.5 border border-violet-200 bg-violet-50/50 rounded-md text-center text-xs focus:outline-none focus:ring-2 focus:ring-violet-400"
+                            className="w-full px-3 py-1.5 border border-violet-300 bg-violet-50 rounded-lg text-center text-sm font-medium text-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-400"
                             placeholder="0"
                             title="Sunday OT hours, paid at hourly × 1"
                           />
