@@ -1,5 +1,17 @@
 // Payroll calculation logic — ported directly from n8n workflow JS code nodes
 
+// OT is paid on the hourly rate (rate/day ÷ 8). Weekday OT earns time-and-a-
+// quarter; OT worked on a Sunday (the rest day) is paid at the plain hourly
+// rate. Month-End keeps the two as separate totals: otHours (weekday) and
+// sundayOtHours (Sunday).
+export const OT_MULTIPLIER = 1.25;
+export const SUNDAY_OT_MULTIPLIER = 1;
+
+function otPayFor(ratePerHour, otHours, sundayOtHours) {
+  return otHours * ratePerHour * OT_MULTIPLIER
+    + sundayOtHours * ratePerHour * SUNDAY_OT_MULTIPLIER;
+}
+
 function isPaidDay(value) {
   if (!value) return false;
   const v = value.toString().toLowerCase().trim();
@@ -65,7 +77,7 @@ function adjustmentsById(adjustments) {
   return map;
 }
 
-const NO_ADJUSTMENT = { otHours: 0, bonus: 0, bonusReason: '', deductionAmount: 0, deductionReason: '', deductionNote: '' };
+const NO_ADJUSTMENT = { otHours: 0, sundayOtHours: 0, bonus: 0, bonusReason: '', deductionAmount: 0, deductionReason: '', deductionNote: '' };
 
 /**
  * Labour payroll: includes OT and absent-day penalty rule.
@@ -149,9 +161,12 @@ export function calculateLabourPayroll(employees, attendance, adjustments) {
     const deductionReason = adj.deductionReason || (penaltyDays ? 'Absent penalty' : '');
 
     const salaryBeforeOT = grossSalary;
-    const otHours = parseFloat(adj.otHours) || 0;
-    const otRatePerHour = ratePerHour * 1.25;
-    const otPay = otHours * otRatePerHour;
+    const weekdayOtHours = parseFloat(adj.otHours) || 0;
+    const sundayOtHours = parseFloat(adj.sundayOtHours) || 0;
+    // otHours on the payroll row is the TOTAL (weekday + Sunday) so the OT Hrs
+    // column and printouts still add up; otPay carries the split rates.
+    const otHours = weekdayOtHours + sundayOtHours;
+    const otPay = otPayFor(ratePerHour, weekdayOtHours, sundayOtHours);
     const netSalary = salaryBeforeOT + otPay + bonus - deductionAmount;
 
     return {
@@ -173,6 +188,7 @@ export function calculateLabourPayroll(employees, attendance, adjustments) {
       ratePerHour: parseFloat(ratePerHour.toFixed(2)),
       salaryBeforeOT: parseFloat(salaryBeforeOT.toFixed(2)),
       otHours: parseFloat(otHours.toFixed(2)),
+      sundayOtHours: parseFloat(sundayOtHours.toFixed(2)),
       otPay: parseFloat(otPay.toFixed(2)),
       // Round net pay to the nearest whole AED (kills the 3,999.90 artifacts
       // that come from rate/day being stored to 2 decimals)
@@ -233,11 +249,13 @@ export function calculateStaffPayroll(employees, attendance, adjustments) {
     const otherDeductions = parseFloat(emp.deductions) || 0;
 
     // Manual Month-End adjustments: bonus adds, deduction subtracts,
-    // OT adds at 1.25× the hourly rate (same rule as labour).
+    // OT adds at 1.25× the hourly rate, Sunday OT at 1× (same rule as labour).
     const bonus = parseFloat(adj.bonus) || 0;
     const manualDeduction = parseFloat(adj.deductionAmount) || 0;
-    const otHours = parseFloat(adj.otHours) || 0;
-    const otPay = otHours * ratePerHour * 1.25;
+    const weekdayOtHours = parseFloat(adj.otHours) || 0;
+    const sundayOtHours = parseFloat(adj.sundayOtHours) || 0;
+    const otHours = weekdayOtHours + sundayOtHours;
+    const otPay = otPayFor(ratePerHour, weekdayOtHours, sundayOtHours);
     const totalDeductions = otherDeductions + manualDeduction;
     const netSalary = grossSalary - totalDeductions + bonus + otPay;
 
@@ -253,6 +271,7 @@ export function calculateStaffPayroll(employees, attendance, adjustments) {
       bonusReason: adj.bonusReason || '',
       ratePerHour: parseFloat(ratePerHour.toFixed(2)),
       otHours: parseFloat(otHours.toFixed(2)),
+      sundayOtHours: parseFloat(sundayOtHours.toFixed(2)),
       otPay: parseFloat(otPay.toFixed(2)),
       // Round net pay to the nearest whole AED (kills the 3,999.90 artifacts)
       netSalary: Math.round(netSalary),

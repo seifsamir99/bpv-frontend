@@ -474,7 +474,7 @@ export default function PayrollPage() {
       const fingerprint = (r, isCash) => JSON.stringify({
         nm: (r.name || '').trim(), ds: (r.designation || '').trim(),
         pd: num(r.paidDays), da: num(r.deductionAmount), rh: num(r.ratePerHour),
-        sb: num(r.salaryBeforeOT), oh: num(r.otHours), op: num(r.otPay),
+        sb: num(r.salaryBeforeOT), oh: num(r.otHours), so: num(r.sundayOtHours), op: num(r.otPay),
         bn: num(r.bonus), ns: num(r.netSalary),
         br: (r.bonusReason || '').trim(), dr: (r.deductionReason || '').trim(),
         dn: (r.deductionNote || '').trim(),
@@ -1340,6 +1340,10 @@ export default function PayrollPage() {
                             isModified={isFieldModified(row.employeeId, 'otHours')}
                             className="text-emerald-600"
                           />
+                          {/* Part of the total worked on Sundays, paid ×1 not ×1.25 */}
+                          {row.sundayOtHours > 0 && (
+                            <div className="text-[10px] text-violet-500 whitespace-nowrap">incl. {row.sundayOtHours} Sun</div>
+                          )}
                         </td>
                         <td className="px-3 py-2.5 text-right">
                           <EditableCell
