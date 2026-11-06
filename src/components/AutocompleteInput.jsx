@@ -34,6 +34,17 @@ export default function AutocompleteInput({
     setHighlightedIndex(-1);
   }, [value]);
 
+  // Multiline: grow the box to fit long text (e.g. a long BPV description),
+  // never shrinking it — so a size the user dragged to with the resize
+  // handle is kept.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!multiline || !el) return;
+    if (el.scrollHeight > el.clientHeight) {
+      el.style.height = `${el.scrollHeight + 2}px`;
+    }
+  }, [value, multiline]);
+
   const handleFocus = () => {
     setIsOpen(true);
   };
@@ -99,7 +110,7 @@ export default function AutocompleteInput({
         onFocus={handleFocus}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        className={`${className} ${multiline ? 'resize-none' : ''}`}
+        className={`${className} ${multiline ? 'resize-y min-h-[3.5rem]' : ''}`}
       />
 
       {isOpen && filteredSuggestions.length > 0 && (
