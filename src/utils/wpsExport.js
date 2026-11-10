@@ -162,7 +162,11 @@ export function autoMatch(templateRows, payrollRows, savedMap = {}) {
 export function wpsValues(row) {
   const variable = round2((row.otPay || 0) + (row.bonus || 0));
   const fixed = round2((row.netSalary || 0) - variable);
-  const leave = row.absentDays ?? Math.max(0, 30 - (row.paidDays || 0));
+  // absentDays leaves out the days marked "Absent x2" on the Payroll page
+  // (they sit in doubleDays) — they are still absences on the WPS sheet.
+  const leave = row.absentDays != null
+    ? row.absentDays + (row.doubleDays || 0)
+    : Math.max(0, 30 - (row.paidDays || 0));
   return { fixed, variable, leave };
 }
 

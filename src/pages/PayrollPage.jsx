@@ -95,6 +95,32 @@ export default function PayrollPage() {
   // to the payroll table. Shape: { id, label, amount }
   const [extras, setExtras] = useState([]);
 
+  // "Absent x2" marks: absent days picked here that cost a labourer TWO days'
+  // pay instead of one. Shape: { [employeeId]: [day, ...] }. Kept under their
+  // own localStorage key (not the draft) because the draft is cleared on save
+  // and a later re-calculate must still apply them. Not counted toward the
+  // 4-absence rule — see calculateLabourPayroll.
+  const doubleKey = `payroll_double_days_${selectedYear}_${selectedMonth}`;
+  const [doubleDays, setDoubleDays] = useState({});
+  const [doublePickerDay, setDoublePickerDay] = useState(null);
+  const [showDoublePanel, setShowDoublePanel] = useState(false);
+  // Month-End adjustments used by the last Calculate; null when the rows on
+  // screen came from a saved payroll (those are shown as stored, not recalculated)
+  const [calcAdjustments, setCalcAdjustments] = useState(null);
+
+  useEffect(() => {
+    let loaded = {};
+    try {
+      const raw = localStorage.getItem(doubleKey);
+      loaded = raw ? JSON.parse(raw) || {} : {};
+    } catch {
+      loaded = {};
+    }
+    setDoubleDays(loaded);
+    setDoublePickerDay(null);
+    setShowDoublePanel(Object.keys(loaded).length > 0);
+  }, [doubleKey]);
+
   // Print dropdown
   const [showPrintMenu, setShowPrintMenu] = useState(false);
   const printMenuRef = useRef(null);
@@ -181,11 +207,13 @@ export default function PayrollPage() {
     setSelectedIds(new Set());
     setOverrides({});
     setPaymentFilter('all');
+    setCalcAdjustments(null);
   }, [selectedType]);
 
   // Cash marks are month-specific — reset them when the period changes
   useEffect(() => {
     setCashEmployees(new Set());
+    setCalcAdjustments(null);
   }, [selectedMonth, selectedYear]);
 
   // Fetch saved payroll for the selected period. For the All view this pulls
@@ -220,6 +248,7 @@ export default function PayrollPage() {
         if (savedData.length > 0 && anySaved) {
           // Saved data exists - load directly (no recalculation)
           setPayrollResults(savedData);
+          setCalcAdjustments(null);
 
           const validIds = savedData.map(r => r.employeeId);
           setSelectedIds(new Set(validIds));
@@ -251,6 +280,45 @@ export default function PayrollPage() {
   }, [overrides, selectedIds, cashEmployees, extras, saveDraft]);
 
   // --- Calculate ---
+  // Pure calc for the current type; labour rows get the Absent x2 marks.
+  const runCalc = (adjustments, dd) => {
+    if (selectedType === 'all') {
+      // Combined view: run each type's calc on its own employees, labour first
+      const labourEmps = employees.filter(e => e.sheetType === 'labour');
+      const staffEmps = employees.filter(e => e.sheetType === 'staff');
+      return [
+        ...calculateLabourPayroll(labourEmps, attendance, adjustments, dd, selectedMonth).map(r => ({ ...r, empType: 'labour' })),
+        ...calculateStaffPayroll(staffEmps, attendance, adjustments).map(r => ({ ...r, empType: 'staff' })),
+      ];
+    }
+    return (selectedType === 'staff'
+      ? calculateStaffPayroll(employees, attendance, adjustments)
+      : calculateLabourPayroll(employees, attendance, adjustments, dd, selectedMonth)
+    ).map(r => ({ ...r, empType: selectedType }));
+  };
+
+  // Tick/untick one labourer for Absent x2 on one day. Persists right away and,
+  // if the rows on screen were calculated, re-runs the calc in place — overrides,
+  // selection, cash marks and extras are left alone.
+  const toggleDoubleDay = (employeeId, day) => {
+    const id = String(employeeId);
+    const days = new Set(doubleDays[id] || []);
+    if (days.has(day)) days.delete(day); else days.add(day);
+    const next = { ...doubleDays };
+    if (days.size > 0) next[id] = [...days].sort((a, b) => a - b);
+    else delete next[id];
+    setDoubleDays(next);
+    try {
+      if (Object.keys(next).length > 0) localStorage.setItem(doubleKey, JSON.stringify(next));
+      else localStorage.removeItem(doubleKey);
+    } catch {
+      // Private window / blocked storage: the marks still apply for this session
+    }
+    if (calcAdjustments && payrollResults) {
+      setPayrollResults(runCalc(calcAdjustments, next));
+    }
+  };
+
   const handleCalculate = async () => {
     if (isLoading) return;
 
@@ -265,21 +333,8 @@ export default function PayrollPage() {
       console.error('Error loading month-end adjustments:', err);
     }
 
-    let results;
-    if (selectedType === 'all') {
-      // Combined view: run each type's calc on its own employees, labour first
-      const labourEmps = employees.filter(e => e.sheetType === 'labour');
-      const staffEmps = employees.filter(e => e.sheetType === 'staff');
-      results = [
-        ...calculateLabourPayroll(labourEmps, attendance, adjustments).map(r => ({ ...r, empType: 'labour' })),
-        ...calculateStaffPayroll(staffEmps, attendance, adjustments).map(r => ({ ...r, empType: 'staff' })),
-      ];
-    } else {
-      results = (selectedType === 'staff'
-        ? calculateStaffPayroll(employees, attendance, adjustments)
-        : calculateLabourPayroll(employees, attendance, adjustments)
-      ).map(r => ({ ...r, empType: selectedType }));
-    }
+    const results = runCalc(adjustments, doubleDays);
+    setCalcAdjustments(adjustments);
     setPayrollResults(results);
 
     const validIds = results.map(r => r.employeeId);
@@ -340,6 +395,43 @@ export default function PayrollPage() {
       };
     });
   }, [payrollResults, overrides]);
+
+  // --- Absent x2 picker data ---
+  const daysInSelectedMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+  const monthAbbr = MONTH_NAMES[selectedMonth].slice(0, 3);
+  const labourNameById = useMemo(() => {
+    const map = {};
+    employees.filter(e => e.sheetType === 'labour').forEach(e => { map[String(e.employeeId)] = e.name; });
+    return map;
+  }, [employees]);
+  // { day: [{ employeeId, name }] } — labourers marked Absent on each day
+  const absentByDay = useMemo(() => {
+    const byDay = {};
+    attendance.forEach(a => {
+      const id = String(a.employeeId);
+      if (!(id in labourNameById)) return;
+      for (let day = 1; day <= daysInSelectedMonth; day++) {
+        if ((a.days?.[day] || '').toString().trim().toLowerCase() === 'absent') {
+          (byDay[day] = byDay[day] || []).push({ employeeId: id, name: labourNameById[id] || a.name });
+        }
+      }
+    });
+    return byDay;
+  }, [attendance, labourNameById, daysInSelectedMonth]);
+  const firstAbsentDay = Object.keys(absentByDay).map(Number).sort((a, b) => a - b)[0] || 1;
+  const pickerDay = doublePickerDay ?? firstAbsentDay;
+  // Current marks grouped by day for the summary line
+  const doubleMarksByDay = useMemo(() => {
+    const byDay = {};
+    Object.entries(doubleDays).forEach(([id, days]) => {
+      days.forEach(day => {
+        const stillAbsent = (absentByDay[day] || []).some(x => x.employeeId === id);
+        (byDay[day] = byDay[day] || []).push({ employeeId: id, name: labourNameById[id] || `#${id}`, stillAbsent });
+      });
+    });
+    return Object.keys(byDay).map(Number).sort((a, b) => a - b).map(day => ({ day, people: byDay[day] }));
+  }, [doubleDays, absentByDay, labourNameById]);
+  const doubleMarkCount = doubleMarksByDay.reduce((n, g) => n + g.people.length, 0);
 
   // Handle field override
   const handleOverride = (employeeId, field, value) => {
@@ -1157,6 +1249,116 @@ export default function PayrollPage() {
         {attError && (
           <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-red-700 text-sm">
             Attendance: {attError}
+          </div>
+        )}
+
+        {/* Absent x2: chosen absent days cost two days' pay instead of one */}
+        {payrollResults && selectedType !== 'staff' && (
+          <div className="mb-4 bg-white rounded-xl border border-red-100 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setShowDoublePanel(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left"
+            >
+              <span className="text-sm font-semibold text-slate-700">
+                Double deduction days
+                {doubleMarkCount > 0 && (
+                  <span className="ml-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+                    {doubleMarkCount} marked
+                  </span>
+                )}
+              </span>
+              <span className="text-xs text-slate-400">{showDoublePanel ? 'Hide' : 'Show'}</span>
+            </button>
+            {showDoublePanel && (
+              <div className="px-4 pb-4 border-t border-slate-100">
+                <p className="text-xs text-slate-500 mt-3">
+                  Each ticked labourer loses 2 days' pay for that date instead of 1.
+                  These days are not counted toward the 4-absence rule.
+                </p>
+                {!calcAdjustments && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                    These rows were loaded from the saved payroll. Click Calculate Payroll to apply changes.
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <label className="text-sm text-slate-600" htmlFor="double-day">Date</label>
+                  <select
+                    id="double-day"
+                    value={pickerDay}
+                    onChange={(e) => setDoublePickerDay(parseInt(e.target.value))}
+                    className="text-sm text-slate-700 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    {Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1).map(day => {
+                      const n = (absentByDay[day] || []).length;
+                      return (
+                        <option key={day} value={day}>
+                          {day} {monthAbbr}{n > 0 ? ` (${n} absent)` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                {(absentByDay[pickerDay] || []).length === 0 ? (
+                  <p className="text-sm text-slate-400 mt-3">Nobody is marked Absent on {pickerDay} {monthAbbr}.</p>
+                ) : (
+                  <div className="grid gap-1 mt-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {absentByDay[pickerDay].map(p => {
+                      const checked = (doubleDays[p.employeeId] || []).includes(pickerDay);
+                      return (
+                        <label
+                          key={p.employeeId}
+                          className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 cursor-pointer ${checked ? 'bg-red-50 text-red-700' : 'hover:bg-slate-50 text-slate-700'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleDoubleDay(p.employeeId, pickerDay)}
+                            className="w-4 h-4 rounded border-slate-300 text-red-500 focus:ring-red-500"
+                          />
+                          <span className="text-slate-400 text-xs">{p.employeeId}</span>
+                          <span className="truncate">{p.name}</span>
+                          {checked && <span className="ml-auto text-xs font-semibold">x2</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                {doubleMarksByDay.length > 0 && (
+                  <div className="mt-4 space-y-1">
+                    <div className="text-xs font-semibold text-slate-500 uppercase">Marked this month</div>
+                    {doubleMarksByDay.map(({ day, people }) => (
+                      <div key={day} className="flex flex-wrap items-center gap-1.5 text-sm">
+                        <button
+                          type="button"
+                          onClick={() => setDoublePickerDay(day)}
+                          className="font-medium text-slate-700 hover:text-orange-600"
+                        >
+                          {day} {monthAbbr}:
+                        </button>
+                        {people.map(p => (
+                          <span
+                            key={p.employeeId}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${p.stillAbsent ? 'bg-red-50 border-red-200 text-red-700' : 'bg-slate-50 border-slate-200 text-slate-400 line-through'}`}
+                            title={p.stillAbsent ? '' : 'Not Absent on this day in Attendance, so it is ignored'}
+                          >
+                            {p.name}
+                            <button
+                              type="button"
+                              onClick={() => toggleDoubleDay(p.employeeId, day)}
+                              className="hover:text-red-900"
+                              title="Remove"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
