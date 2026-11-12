@@ -9,6 +9,8 @@ import useAttendance from '../hooks/useAttendance';
 import usePayrollDraft from '../hooks/usePayrollDraft';
 import { calculateLabourPayroll, calculateStaffPayroll } from '../utils/payrollCalculation';
 import getPrevMonth from '../utils/prevMonth';
+import wpsApi from '../services/wpsApi';
+import { companyName } from '../utils/wpsCompanies';
 
 import { API_BASE as API_BASE_URL } from '../services/apiBase';
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -132,27 +134,77 @@ export default function PayrollPage() {
     return () => document.removeEventListener('mousedown', close);
   }, [showPrintMenu]);
 
-  // WPS bank sheet export: the office picks last month's WPS .xls files, one
-  // per company (they hold the MOL codes and bank accounts), and the modal
-  // refills them from the payroll
-  const [wpsTemplates, setWpsTemplates] = useState(null); // [{ name, rows }]
+  // WPS bank sheet export. Each company's WPS lines (MOL codes, legal names,
+  // bank accounts) are kept in the database: the office uploads a company's
+  // bank file once (again when someone joins or changes bank), then each
+  // month just picks the company and the modal fills it from the payroll.
+  const [wpsRoster, setWpsRoster] = useState(null); // null = not loaded yet
+  const [wpsLoading, setWpsLoading] = useState(false);
+  const [wpsCompany, setWpsCompany] = useState(null); // compMol shown in the modal
+  const [showWpsMenu, setShowWpsMenu] = useState(false);
+  const wpsMenuRef = useRef(null);
   const wpsInputRef = useRef(null);
+  useEffect(() => {
+    const close = (e) => {
+      if (wpsMenuRef.current && !wpsMenuRef.current.contains(e.target)) setShowWpsMenu(false);
+    };
+    if (showWpsMenu) document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showWpsMenu]);
 
+  const loadWpsRoster = async () => {
+    setWpsLoading(true);
+    try {
+      const roster = await wpsApi.getRoster();
+      setWpsRoster(roster);
+      return roster;
+    } catch (err) {
+      setSaveError(`WPS: ${err.response?.data?.error || err.message}`);
+      return null;
+    } finally {
+      setWpsLoading(false);
+    }
+  };
+
+  const openWpsMenu = () => {
+    const next = !showWpsMenu;
+    setShowWpsMenu(next);
+    if (next && wpsRoster === null && !wpsLoading) loadWpsRoster();
+  };
+
+  // One entry per company in the roster, in file order
+  const wpsCompanies = useMemo(() => {
+    const groups = {};
+    (wpsRoster || []).forEach(r => { (groups[r.compMol] ||= []).push(r); });
+    return Object.entries(groups).map(([compMol, rows]) => ({ compMol, rows }));
+  }, [wpsRoster]);
+
+  // Upload a company's bank WPS file(s): saved as that company's roster
   const handleWpsFiles = async (e) => {
     const files = [...(e.target.files || [])];
     e.target.value = ''; // let the same files be picked again
     if (files.length === 0) return;
+    setShowWpsMenu(false);
     let current = '';
     try {
-      const { parseWpsTemplate } = await import('../utils/wpsExport');
-      const templates = [];
+      const { parseWpsTemplate, takeLegacyPairings } = await import('../utils/wpsExport');
+      const saved = [];
       for (const file of files) {
         current = file.name;
-        templates.push({ name: file.name, rows: parseWpsTemplate(await file.arrayBuffer()) });
+        const rows = parseWpsTemplate(await file.arrayBuffer());
+        const compMol = rows[0].compMol;
+        if (!compMol || rows.some(r => r.compMol !== compMol)) {
+          throw new Error('Every row must have the same COMPMOLCODE');
+        }
+        await wpsApi.replaceCompany(compMol, takeLegacyPairings(rows));
+        saved.push(compMol);
       }
-      setWpsTemplates(templates);
+      const roster = await loadWpsRoster();
+      setSaveError(null);
+      setSaveSuccess(`Saved WPS list for ${files.length} ${files.length === 1 ? 'company' : 'companies'} — pick the company from WPS Excel next month, no upload needed`);
+      if (roster && saved.length === 1) setWpsCompany(saved[0]);
     } catch (err) {
-      setSaveError(`WPS file ${current}: ${err.message}`);
+      setSaveError(`WPS file ${current}: ${err.response?.data?.error || err.message}`);
     }
   };
 
@@ -1152,18 +1204,51 @@ export default function PayrollPage() {
                 )}
               </div>
               {displayData.length > 0 && (
-                <>
+                <div className="relative" ref={wpsMenuRef}>
                   <button
-                    onClick={() => wpsInputRef.current?.click()}
+                    onClick={openWpsMenu}
                     disabled={!isAllView}
                     className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
-                    title={isAllView ? "Pick last month's WPS .xls files (Newell + Najmat Al Waad together) to fill them from this payroll" : 'Switch to All to export WPS'}
+                    title={isAllView ? 'Pick the company and download its WPS bank file for this month' : 'Switch to All to export WPS'}
                   >
                     <HiDocumentDownload className="w-4 h-4" />
                     WPS Excel
                   </button>
+                  {showWpsMenu && (
+                    <div className="absolute right-0 mt-1 z-50 w-72 bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                      <div className="px-3 py-1 text-xs text-slate-400 font-medium">
+                        WPS file for {MONTH_NAMES[selectedMonth]} {selectedYear}
+                      </div>
+                      {wpsLoading && wpsRoster === null ? (
+                        <div className="px-3 py-2 text-sm text-slate-400">Loading…</div>
+                      ) : wpsCompanies.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-slate-500">
+                          No WPS list saved yet. Upload last month's WPS file for each company once — after that you just pick the company.
+                        </div>
+                      ) : (
+                        wpsCompanies.map(c => (
+                          <button
+                            key={c.compMol}
+                            onClick={() => { setShowWpsMenu(false); setWpsCompany(c.compMol); }}
+                            className="w-full text-left px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
+                          >
+                            <div className="font-medium">{companyName(c.compMol)}</div>
+                            <div className="text-xs text-slate-400">{c.rows.length} people on the bank file</div>
+                          </button>
+                        ))
+                      )}
+                      <div className="border-t border-slate-100 my-1" />
+                      <button
+                        onClick={() => wpsInputRef.current?.click()}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
+                        title="Pick one or both companies' WPS .xls — replaces that company's saved list (new hires, bank changes)"
+                      >
+                        Upload / update WPS file…
+                      </button>
+                    </div>
+                  )}
                   <input ref={wpsInputRef} type="file" accept=".xls,.xlsx" multiple onChange={handleWpsFiles} className="hidden" />
-                </>
+                </div>
               )}
               {displayData.length > 0 && (
                 <button
@@ -1683,10 +1768,12 @@ export default function PayrollPage() {
         )}
       </main>
 
-      {wpsTemplates && (
+      {wpsCompany && wpsRoster && (
         <React.Suspense fallback={null}>
           <WpsExportModal
-            templates={wpsTemplates}
+            key={wpsCompany}
+            compMol={wpsCompany}
+            roster={wpsRoster}
             payrollRows={displayData}
             isCashEmployee={isCashEmployee}
             toggleCash={toggleCash}
@@ -1694,8 +1781,12 @@ export default function PayrollPage() {
             year={selectedYear}
             monthLabel={MONTH_NAMES[selectedMonth]}
             fmt={fmt}
-            onClose={() => setWpsTemplates(null)}
-            onExported={(msg) => { setWpsTemplates(null); setSaveError(null); setSaveSuccess(msg); }}
+            onClose={() => setWpsCompany(null)}
+            onPairingsSaved={(pairs) => setWpsRoster(prev => (prev || []).map(r =>
+              r.molCode in pairs ? { ...r, employeeId: pairs[r.molCode] } : r
+            ))}
+            onExported={(msg) => { setWpsCompany(null); setSaveError(null); setSaveSuccess(msg); }}
+            onError={(msg) => setSaveError(msg)}
           />
         </React.Suspense>
       )}

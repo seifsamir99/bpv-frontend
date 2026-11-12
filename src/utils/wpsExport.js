@@ -1,30 +1,20 @@
 // WPS salary-transfer sheet (the bank's .xls upload).
 // The bank file is the only place that holds each employee's MOL code, full
-// legal name, bank routing code and account number, so the office uploads
-// last month's file as the template and we refill the pay columns from the
-// payroll: INCOMEFIXED = net − (OT + bonus), INCOMEVAR = OT + bonus,
-// LEAVEDAYS = absent days.
+// legal name, bank routing code and account number. The office uploads each
+// company's file once; its lines are kept in the database (wps_roster) and
+// every month we refill the pay columns from the payroll:
+// INCOMEFIXED = net − (OT + bonus), INCOMEVAR = OT + bonus, LEAVEDAYS = absent days.
 import * as XLSX from 'xlsx';
+
+export { companyName } from './wpsCompanies';
 
 const HEADERS = ['COMPMOLCODE', 'EMPMOLCODE', 'EMPNAME', 'PAYSTARTON', 'PAYENDON', 'INCOMEFIXED', 'INCOMEVAR', 'LEAVEDAYS', 'SALMONTH', 'SALYEAR', 'BANKCODE', 'ACC.NO'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const TRANSFER_CHARGE = 5.25;
 export const ON_LEAVE = 'On Leave';
 
-const STORAGE_KEY = 'newell-wps-map-v1';
-
-// Payroll covers employees of both companies; each has its own WPS file,
-// told apart by the COMPMOLCODE column.
-const COMPANIES = {
-  '0000000787503': 'NEWELL ELECTROMECHANICAL LLC',
-  '0000002540009': 'NAJMAT AL WAAD TECHNICAL SERVICES LLC',
-};
-
-export function companyName(compMol, fileName = '') {
-  if (COMPANIES[compMol]) return COMPANIES[compMol];
-  // Unknown company: the uploaded file name minus copy suffixes like " (3) (1)"
-  return fileName.replace(/\.[^.]+$/, '').replace(/\s*\(\d+\)/g, '').split(' - ')[0].trim() || `MOL ${compMol}`;
-}
+// Where this browser kept its pairings before they moved to the database
+const LEGACY_STORAGE_KEY = 'newell-wps-map-v1';
 
 const round2 = (n) => Math.round((n || 0) * 100) / 100;
 
@@ -170,27 +160,21 @@ export function wpsValues(row) {
   return { fixed, variable, leave };
 }
 
-// --- Remembered pairings (per browser) --------------------------------------
+// --- One-time carry-over of the old per-browser pairings ---------------------
 
-// map:          { [EMPMOLCODE]: employeeId } ('' = not in payroll)
-// companies:    { [COMPMOLCODE]: employeeId[] } — who was in each company's file
-// otherCompany: employeeId[] flagged by hand as not belonging to any file loaded
-export function loadWpsMemory() {
+// Pairings used to be remembered in this browser only ({ map: { [EMPMOLCODE]:
+// employeeId } }). On upload, attach any we have so they reach the database;
+// rows without one are left for the server to keep its existing pairing.
+export function takeLegacyPairings(rows) {
+  let map = {};
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return { map: parsed.map || {}, companies: parsed.companies || {}, otherCompany: parsed.otherCompany || [] };
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    map = (raw && JSON.parse(raw)?.map) || {};
   } catch {
-    return { map: {}, companies: {}, otherCompany: [] };
+    map = {};
   }
-}
-
-export function saveWpsMemory(memory) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(memory));
-  } catch {
-    // storage blocked — the pairings just won't be remembered
-  }
+  // '' meant "not in payroll" there; the database spells that '-'
+  return rows.map(r => (r.molCode in map ? { ...r, employeeId: map[r.molCode] ? String(map[r.molCode]) : '-' } : r));
 }
 
 // --- Output -----------------------------------------------------------------
