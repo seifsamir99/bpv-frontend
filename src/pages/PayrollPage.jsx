@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { HiCurrencyDollar, HiSave, HiRefresh, HiExclamationCircle, HiCash, HiPrinter, HiFolderOpen, HiPencilAlt, HiDocumentDownload } from 'react-icons/hi';
+import { HiCurrencyDollar, HiSave, HiRefresh, HiExclamationCircle, HiCash, HiPrinter, HiFolderOpen, HiPencilAlt, HiDocumentDownload, HiTrash } from 'react-icons/hi';
 import PageHeader from '../components/PageHeader';
 // Loaded on demand — it pulls in SheetJS, which nothing else on the page needs
 const WpsExportModal = React.lazy(() => import('../components/WpsExportModal'));
@@ -82,6 +82,15 @@ export default function PayrollPage() {
   const [selectedMonth, setSelectedMonth] = useState(prevMonthDefault.month);
   const [selectedYear, setSelectedYear] = useState(prevMonthDefault.year);
   const [payrollResults, setPayrollResults] = useState(null);
+  // Which period ("type|month|year") the rows in payrollResults belong to.
+  // Save refuses when this doesn't match the selected period, so rows from one
+  // month can never be written into another.
+  const [resultsPeriodKey, setResultsPeriodKey] = useState(null);
+  const periodKey = `${selectedType}|${selectedMonth}|${selectedYear}`;
+  // Always the current period — async loads compare against it after their
+  // await and drop their result if the user switched period meanwhile.
+  const periodRef = useRef(periodKey);
+  periodRef.current = periodKey;
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [saveSuccess, setSaveSuccess] = useState(null);
@@ -239,6 +248,35 @@ export default function PayrollPage() {
     // The auto-load effect picks the saved records up from the database
   };
 
+  const typeName = (t) => (t === 'staff' ? 'Staff' : t === 'labour' ? 'Labour' : 'Labour + Staff');
+
+  // Delete one whole saved payroll run (month + type) from the database
+  const deleteHistoryEntry = async (h) => {
+    const label = `${MONTH_NAMES[h.month]} ${h.year} ${typeName(h.type)}`;
+    if (!window.confirm(`Delete saved ${label} payroll (${h.employees} employees, ${fmt(h.totalNet)} AED)? This cannot be undone.`)) return;
+    try {
+      const res = await axios.delete(`${API_BASE_URL}/payroll`, {
+        params: { month: h.month, year: h.year, type: h.type },
+      });
+      if (!res.data.success) { setSaveError(res.data.error); return; }
+      setSaveError(null);
+      // If that run is on screen (directly or inside the All view), clear the
+      // table so nobody re-saves the rows that were just deleted.
+      const viewing = h.month === selectedMonth && h.year === selectedYear
+        && (selectedType === h.type || selectedType === 'all');
+      if (viewing) {
+        setPayrollResults(null);
+        setResultsPeriodKey(null);
+        setSelectedIds(new Set());
+        setOverrides({});
+      }
+      setSaveSuccess(`${res.data.message}${viewing ? ' — click Calculate Payroll to start this month again' : ''}`);
+      fetchHistory();
+    } catch (err) {
+      setSaveError(err.response?.data?.error || err.message);
+    }
+  };
+
   const isAllView = selectedType === 'all';
   // Column count of the results table — base 13 (checkbox, #, ID, Name,
   // Designation, Cash, Paid Days, Deductions, Rate/Hr, OT Hrs, OT Pay, Bonus,
@@ -249,23 +287,26 @@ export default function PayrollPage() {
   const { loadDraft, saveDraft, clearDraft, hasDraft, draftTimestamp } = usePayrollDraft(selectedType, selectedYear, selectedMonth);
   const isLoading = empLoading || attLoading;
 
-  // Clear results when type changes. Cash marks are kept — employee IDs are
-  // global, so marks made on the Labour tab must survive switching to All
-  // before saving (they used to be wiped here, silently losing the marks).
+  // Clear the table whenever the period (type, month or year) changes. Month
+  // changes used to keep the previous month's rows on screen, and Save then
+  // wrote them into the newly picked month. Cash marks survive a type switch:
+  // employee IDs are global, so marks made on the Labour tab must survive
+  // switching to All before saving.
   useEffect(() => {
     setPayrollResults(null);
+    setResultsPeriodKey(null);
     setSaveSuccess(null);
     setSaveError(null);
     setSelectedIds(new Set());
     setOverrides({});
+    setExtras([]);
     setPaymentFilter('all');
     setCalcAdjustments(null);
-  }, [selectedType]);
+  }, [selectedType, selectedMonth, selectedYear]);
 
-  // Cash marks are month-specific — reset them when the period changes
+  // Cash marks are month-specific — reset them when the month changes
   useEffect(() => {
     setCashEmployees(new Set());
-    setCalcAdjustments(null);
   }, [selectedMonth, selectedYear]);
 
   // Fetch saved payroll for the selected period. For the All view this pulls
@@ -294,12 +335,17 @@ export default function PayrollPage() {
   useEffect(() => {
     if (isLoading) return;
 
+    const key = periodKey;
     const autoLoad = async () => {
       try {
         const { rows: savedData, anySaved } = await fetchSavedPayroll();
+        // User switched period while this was loading — the answer is for a
+        // month that's no longer on screen, so drop it
+        if (periodRef.current !== key) return;
         if (savedData.length > 0 && anySaved) {
           // Saved data exists - load directly (no recalculation)
           setPayrollResults(savedData);
+          setResultsPeriodKey(key);
           setCalcAdjustments(null);
 
           const validIds = savedData.map(r => r.employeeId);
@@ -324,12 +370,16 @@ export default function PayrollPage() {
     autoLoad();
   }, [selectedMonth, selectedYear, selectedType, isLoading]);
 
-  // Auto-save draft when overrides, cash selections or extra charges change
+  // Auto-save draft when overrides, cash selections or extra charges change.
+  // Only while the rows on screen belong to the selected period: on a month
+  // switch saveDraft points at the NEW month's key before the old month's
+  // edits are cleared, which used to copy one month's edits into another's draft.
   useEffect(() => {
+    if (resultsPeriodKey !== periodKey) return;
     if (Object.keys(overrides).length > 0 || cashEmployees.size > 0 || extras.length > 0) {
       saveDraft(overrides, selectedIds, cashEmployees, extras);
     }
-  }, [overrides, selectedIds, cashEmployees, extras, saveDraft]);
+  }, [overrides, selectedIds, cashEmployees, extras, saveDraft, resultsPeriodKey, periodKey]);
 
   // --- Calculate ---
   // Pure calc for the current type; labour rows get the Absent x2 marks.
@@ -373,6 +423,7 @@ export default function PayrollPage() {
 
   const handleCalculate = async () => {
     if (isLoading) return;
+    const key = periodKey;
 
     // Per-month OT/bonus/deduction entries from Month-End for the SELECTED month
     let adjustments = [];
@@ -384,10 +435,13 @@ export default function PayrollPage() {
     } catch (err) {
       console.error('Error loading month-end adjustments:', err);
     }
+    // Period changed while loading — these figures are for the old month
+    if (periodRef.current !== key) return;
 
     const results = runCalc(adjustments, doubleDays);
     setCalcAdjustments(adjustments);
     setPayrollResults(results);
+    setResultsPeriodKey(key);
 
     const validIds = results.map(r => r.employeeId);
 
@@ -578,6 +632,10 @@ export default function PayrollPage() {
   // --- Save to Google Sheet (only selected) ---
   const handleSave = async () => {
     if (!displayData || displayData.length === 0) return;
+    if (resultsPeriodKey !== periodKey) {
+      setSaveError(`The rows on screen are not for ${MONTH_NAMES[selectedMonth]} ${selectedYear} — click Calculate Payroll first`);
+      return;
+    }
 
     // Capture current cash employees as a snapshot (avoid closure issues)
     const cashEmployeesSnapshot = new Set(cashEmployees);
@@ -610,9 +668,9 @@ export default function PayrollPage() {
     setSaveError(null);
     setSaveSuccess(null);
     try {
-      // Save only what changed: diff each row against the saved snapshot and
-      // upsert just the differing ones (partial). A type with no saved data
-      // yet gets a full first save. Payroll is stored per type, so the All
+      // Each save replaces that month+type's saved payroll with exactly the
+      // ticked rows on screen (unticked people are removed). If a save already
+      // exists and differs, ask first. Payroll is stored per type, so the All
       // view saves labour and staff as separate writes.
       const num = (v) => Math.round((parseFloat(v) || 0) * 100) / 100;
       const fingerprint = (r, isCash) => JSON.stringify({
@@ -630,10 +688,11 @@ export default function PayrollPage() {
         `${r.empType}:${r.employeeId}`,
         fingerprint(r, r.isCash || r.paymentMethod === 'Cash'),
       ]));
-      const savedTypeCounts = savedRows.reduce((a, r) => {
-        a[r.empType] = (a[r.empType] || 0) + 1;
+      const savedByType = savedRows.reduce((a, r) => {
+        (a[r.empType] = a[r.empType] || []).push(r);
         return a;
       }, {});
+      const sumNet = (rows) => rows.reduce((s, r) => s + (parseFloat(r.netSalary) || 0), 0);
 
       const batches = (selectedType === 'all'
         ? [
@@ -643,16 +702,39 @@ export default function PayrollPage() {
         : [[selectedType, dataToSave]]
       ).filter(([, rows]) => rows.length > 0);
 
-      const messages = [];
-      let wroteAnything = false;
+      // Work out which types actually differ from what's saved, and ask once
+      // before replacing any existing save
+      const toWrite = [];
+      const overwriteLines = [];
       for (const [batchType, rows] of batches) {
-        const hasSaved = (savedTypeCounts[batchType] || 0) > 0;
-        // First save of this type → full snapshot; otherwise only changed rows
-        const rowsToSend = hasSaved
-          ? rows.filter(r => savedMap.get(`${batchType}:${r.employeeId}`) !== fingerprint(r, r.isCash))
-          : rows;
-        if (rowsToSend.length === 0) continue;
+        const saved = savedByType[batchType] || [];
+        const unchanged = saved.length === rows.length
+          && rows.every(r => savedMap.get(`${batchType}:${r.employeeId}`) === fingerprint(r, r.isCash));
+        if (unchanged) continue;
+        toWrite.push([batchType, rows]);
+        if (saved.length > 0) {
+          overwriteLines.push(
+            `${typeName(batchType)}: saved ${saved.length} employees, ${fmt(sumNet(saved))} AED`
+            + ` → on screen ${rows.length} employees, ${fmt(sumNet(rows))} AED`
+          );
+        }
+      }
 
+      if (toWrite.length === 0) {
+        setSaveSuccess(`Nothing changed — ${MONTH_NAMES[selectedMonth]} ${selectedYear} is already saved exactly like this`);
+        return;
+      }
+      if (overwriteLines.length > 0 && !window.confirm(
+        `${MONTH_NAMES[selectedMonth]} ${selectedYear} already has a saved payroll.\n\n`
+        + `${overwriteLines.join('\n')}\n\n`
+        + 'Replace the saved payroll with what is on screen?'
+      )) {
+        setSaveSuccess('Not saved — the previous save was kept');
+        return;
+      }
+
+      const messages = [];
+      for (const [batchType, rows] of toWrite) {
         // 30s timeout so the button can't hang forever if the connection drops
         // (e.g. a backend redeploy mid-request) — the save itself may still
         // have gone through; reloading shows the truth.
@@ -660,19 +742,23 @@ export default function PayrollPage() {
           month: selectedMonth,
           year: selectedYear,
           type: batchType,
-          data: rowsToSend,
-          partial: hasSaved,
+          data: rows,
+          partial: false,
         }, { timeout: 30000 });
         if (!res.data.success) {
           setSaveError(res.data.error);
           return;
         }
-        wroteAnything = true;
         messages.push(res.data.message);
       }
-      setSaveSuccess(wroteAnything ? messages.join(' · ') : 'Nothing changed — everything is already saved');
+      setSaveSuccess(messages.join(' · '));
       clearDraft();
+      // Bake the edits into the rows before dropping the overrides — clearing
+      // them alone flipped the table back to the pre-edit numbers, and the next
+      // save would then quietly overwrite the edits that were just saved.
+      setPayrollResults(displayData);
       setOverrides({});
+      fetchHistory();
       // Cash marks stay visible — they now match what was just saved
     } catch (err) {
       setSaveError(err.response?.data?.error || err.message);
@@ -1280,12 +1366,13 @@ export default function PayrollPage() {
                 {history.map(h => {
                   const isCurrent = h.month === selectedMonth && h.year === selectedYear && h.type === selectedType;
                   return (
-                    <button
+                    <div
                       key={`${h.year}-${h.month}-${h.type}`}
+                      className={`flex items-center transition-colors ${isCurrent ? 'bg-purple-50' : 'hover:bg-slate-50'}`}
+                    >
+                    <button
                       onClick={() => openHistoryEntry(h)}
-                      className={`w-full flex flex-wrap items-center gap-x-6 gap-y-1 px-4 py-3 text-left transition-colors ${
-                        isCurrent ? 'bg-purple-50' : 'hover:bg-slate-50'
-                      }`}
+                      className="flex-1 min-w-0 flex flex-wrap items-center gap-x-6 gap-y-1 pl-4 pr-2 py-3 text-left"
                     >
                       <span className="font-medium text-slate-800 w-36">
                         {MONTH_NAMES[h.month]} {h.year}
@@ -1307,6 +1394,15 @@ export default function PayrollPage() {
                       )}
                       <span className="ml-auto font-bold text-orange-700">{fmt(h.totalNet)} AED</span>
                     </button>
+                    <button
+                      onClick={() => deleteHistoryEntry(h)}
+                      title={`Delete saved ${MONTH_NAMES[h.month]} ${h.year} ${typeName(h.type)} payroll`}
+                      aria-label={`Delete saved ${MONTH_NAMES[h.month]} ${h.year} ${typeName(h.type)} payroll`}
+                      className="mr-3 p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex-shrink-0"
+                    >
+                      <HiTrash className="w-4 h-4" />
+                    </button>
+                    </div>
                   );
                 })}
               </div>
