@@ -1,4 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+
+// Multiline inputs grow with their text (BPV descriptions run to 3-5 lines)
+// instead of a fixed 2-row box that hides the end of the description.
+const MAX_AUTO_HEIGHT = 240; // px; beyond this the box scrolls
 
 export default function AutocompleteInput({
   value,
@@ -13,10 +17,20 @@ export default function AutocompleteInput({
   const containerRef = useRef(null);
   const inputRef = useRef(null);
 
-  // Filter suggestions based on current input
+  // Filter suggestions based on current input. A suggestion identical to what
+  // is already typed offers nothing and only covers the field below.
+  const typed = (value || '').toLowerCase();
   const filteredSuggestions = suggestions.filter(s =>
-    s && s.toLowerCase().includes((value || '').toLowerCase())
+    s && s.toLowerCase().includes(typed) && s.trim().toLowerCase() !== typed.trim()
   ).slice(0, 8); // Max 8 suggestions
+
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!multiline || !el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight + 2, MAX_AUTO_HEIGHT)}px`;
+    el.style.overflowY = el.scrollHeight + 2 > MAX_AUTO_HEIGHT ? 'auto' : 'hidden';
+  }, [value, multiline]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -107,6 +121,7 @@ export default function AutocompleteInput({
           {filteredSuggestions.map((suggestion, index) => (
             <div
               key={index}
+              title={suggestion}
               className={`px-3 py-2 cursor-pointer text-sm truncate ${
                 index === highlightedIndex
                   ? 'bg-blue-50 text-blue-700'
