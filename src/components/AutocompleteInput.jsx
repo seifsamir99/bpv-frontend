@@ -1,8 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
-
-// Multiline inputs grow with their text (BPV descriptions run to 3-5 lines)
-// instead of a fixed 2-row box that hides the end of the description.
-const MAX_AUTO_HEIGHT = 240; // px; beyond this the box scrolls
+import React, { useState, useRef, useEffect } from 'react';
 
 export default function AutocompleteInput({
   value,
@@ -23,14 +19,6 @@ export default function AutocompleteInput({
   const filteredSuggestions = suggestions.filter(s =>
     s && s.toLowerCase().includes(typed) && s.trim().toLowerCase() !== typed.trim()
   ).slice(0, 8); // Max 8 suggestions
-
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!multiline || !el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight + 2, MAX_AUTO_HEIGHT)}px`;
-    el.style.overflowY = el.scrollHeight + 2 > MAX_AUTO_HEIGHT ? 'auto' : 'hidden';
-  }, [value, multiline]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
