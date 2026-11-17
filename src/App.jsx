@@ -14,6 +14,7 @@ import JobOrderPage from './pages/JobOrderPage';
 import PaymentCertPage from './pages/PaymentCertPage';
 import TaxInvoicesPage from './pages/TaxInvoicesPage';
 import SupplierLedgerPage from './pages/SupplierLedgerPage';
+import ProjectsPage from './pages/ProjectsPage';
 import TimeLogPage from './pages/TimeLogPage';
 import SiteLogPage from './pages/SiteLogPage';
 import CreditFormPage from './pages/CreditFormPage';
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/payment-cert" element={<PaymentCertPage />} />
         <Route path="/tax-invoices" element={<TaxInvoicesPage />} />
         <Route path="/supplier-ledger" element={<SupplierLedgerPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/time-log" element={<TimeLogPage />} />
         <Route path="/site-log" element={<SiteLogPage />} />
         <Route path="/credit-form" element={<CreditFormPage />} />

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { HiCurrencyDollar, HiUserGroup, HiDocumentText, HiChartBar, HiClipboardCheck, HiClipboardList, HiClock, HiCreditCard, HiReceiptTax, HiLocationMarker, HiBadgeCheck, HiScale } from 'react-icons/hi';
+import { HiCurrencyDollar, HiUserGroup, HiDocumentText, HiChartBar, HiClipboardCheck, HiClipboardList, HiClock, HiCreditCard, HiReceiptTax, HiLocationMarker, HiBadgeCheck, HiScale, HiOfficeBuilding } from 'react-icons/hi';
 
 const sections = [
   {
@@ -196,6 +196,19 @@ const sections = [
     hoverGradient: 'hover:from-red-600 hover:to-red-700',
     iconBg: 'bg-red-100',
     iconColor: 'text-red-600',
+    disabled: false,
+  },
+  {
+    id: 'projects',
+    title: 'Projects',
+    description: 'Site Balance Sheet: Contract, Received & Spent',
+    icon: HiOfficeBuilding,
+    path: '/projects',
+    color: 'emerald',
+    gradient: 'from-emerald-500 to-emerald-600',
+    hoverGradient: 'hover:from-emerald-600 hover:to-emerald-700',
+    iconBg: 'bg-emerald-100',
+    iconColor: 'text-emerald-600',
     disabled: false,
   },
   {

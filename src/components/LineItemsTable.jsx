@@ -1,9 +1,17 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { HiPlus, HiMinus } from 'react-icons/hi';
 import AutocompleteInput from './AutocompleteInput';
 import { toDateInputValue, fromDateInputValue, isUnrepresentable } from '../utils/chequeDate';
+import { listProjects } from '../services/projectsApi';
 
 export default function LineItemsTable({ items, onChange, maxItems = 5, companySuggestions = [], descriptionSuggestions = [] }) {
+  // Tagging a line with a project puts it on that project's /projects page
+  // straight away; untagged lines are only suggested there for review.
+  const [projects, setProjects] = useState([]);
+  useEffect(() => {
+    listProjects().then(setProjects).catch(() => setProjects([]));
+  }, []);
+
   const addItem = () => {
     if (items.length >= maxItems) return;
 
@@ -153,6 +161,22 @@ export default function LineItemsTable({ items, onChange, maxItems = 5, companyS
                 />
               </div>
             </div>
+
+            {projects.length > 0 && (
+              <div>
+                <label className="text-xs text-slate-500">Project (site)</label>
+                <select
+                  value={item.projectCode || ''}
+                  onChange={(e) => updateItem(index, 'projectCode', e.target.value)}
+                  className="input-field text-sm"
+                >
+                  <option value="">Not a project cost</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.code}>{p.code} – {p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         ))}
       </div>
