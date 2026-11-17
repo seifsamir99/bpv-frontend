@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { HiCreditCard, HiCalendar, HiViewList, HiClock, HiExclamation, HiCheckCircle, HiBan, HiExternalLink, HiPrinter, HiPlus, HiRefresh } from 'react-icons/hi';
+import { HiCreditCard, HiCalendar, HiViewList, HiClock, HiExclamation, HiCheckCircle, HiBan, HiExternalLink, HiPrinter, HiPlus, HiRefresh, HiTrash } from 'react-icons/hi';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import AddChequeModal from '../components/AddChequeModal';
+import DeleteChequeDialog from '../components/DeleteChequeDialog';
+import { isHidden, hideCheque, deleteChequeFromBpv } from '../utils/chequeDelete';
 import axios from 'axios';
 import { bpvApi } from '../services/api';
 
 import { API_BASE as API_BASE_URL } from '../services/apiBase';
-import { parseChequeDate as parseDate } from '../utils/chequeDate';
+import { parseChequeDate as parseDate, fromDateInputValue } from '../utils/chequeDate';
 
 // Status options with colors - CDC uses Pending/Cleared
 const STATUS_OPTIONS = [
@@ -20,6 +22,23 @@ const formatDate = (dateStr) => {
   const date = parseDate(dateStr);
   if (!date) return dateStr || '-';
   return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+// Manually added CDCs used to be saved DAY-first (DD/MM/YYYY) while every
+// reader takes MM/DD/YYYY, so a cheque dated 06/11 (6 Nov) showed up in June.
+// Entries without the dateOrder flag are all from that code: swap them to
+// month-first once, flag them, and write them back.
+const migrateManualCdcDates = (list) => {
+  let changed = false;
+  const out = list.map(c => {
+    if (c.dateOrder === 'MDY') return c;
+    changed = true;
+    const parts = String(c.chequeDate || '').split('/');
+    const chequeDate = parts.length === 3 ? `${parts[1]}/${parts[0]}/${parts[2]}` : c.chequeDate;
+    return { ...c, chequeDate, dateOrder: 'MDY' };
+  });
+  if (changed) localStorage.setItem('cdcCheques', JSON.stringify(out));
+  return out;
 };
 
 // Format number as AED currency
@@ -48,6 +67,8 @@ const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 
 export default function CDCPage() {
   const [cdcs, setCdcs] = useState([]);
+  const [vouchers, setVouchers] = useState([]);   // BPV vouchers, for delete-from-BPV
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -87,7 +108,7 @@ export default function CDCPage() {
       setLoading(true);
 
       // 1. Load standalone CDCs from localStorage (manual entries not from BPV)
-      const standaloneCdcs = JSON.parse(localStorage.getItem('cdcCheques') || '[]');
+      const standaloneCdcs = migrateManualCdcDates(JSON.parse(localStorage.getItem('cdcCheques') || '[]'));
 
       // 2. Fetch BPV-linked CDCs and CDC statuses in parallel
       const [bpvResponse, statusResponse] = await Promise.all([
@@ -96,6 +117,7 @@ export default function CDCPage() {
       ]);
 
       const cdcVouchers = (bpvResponse.data || []).filter(v => v.pdcType === 'CDC');
+      setVouchers(cdcVouchers);
       const bpvLinkedCdcs = cdcVouchers.flatMap(voucher =>
         (voucher.lineItems || [])
           .filter(item => item.chequeNo && item.chequeDate)
@@ -123,7 +145,8 @@ export default function CDCPage() {
         }
       });
 
-      setCdcs(allCdcs);
+      // Cheques the user chose to hide from the tracker (BPV left untouched)
+      setCdcs(allCdcs.filter(cdc => !isHidden(savedStatuses, cdc)));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -293,7 +316,9 @@ export default function CDCPage() {
       bpvDate: '',
       company: chequeData.company,
       chequeNo: chequeData.chequeNo,
-      chequeDate: formatDateForDisplay(chequeData.chequeDate),
+      // Month-first, the order every cheque-date reader expects (utils/chequeDate)
+      chequeDate: fromDateInputValue(chequeData.chequeDate),
+      dateOrder: 'MDY',
       amount: chequeData.amount,
       description: '',
       status: chequeData.status
@@ -308,11 +333,31 @@ export default function CDCPage() {
     fetchCdcs();
   };
 
-  // Format date from YYYY-MM-DD to DD/MM/YYYY for display
-  const formatDateForDisplay = (dateStr) => {
-    const [year, month, day] = dateStr.split('-');
-    return `${day}/${month}/${year}`;
+  // --- Delete / hide a cheque (see DeleteChequeDialog) ---
+  const dropFromSelection = (chequeNo) => setSelectedCdcs(prev => {
+    const next = new Set(prev); next.delete(chequeNo); return next;
+  });
+
+  const handleDeleteFromBpv = async (cdc) => {
+    const voucher = vouchers.find(v => String(v.bpvNo).trim() === String(cdc.bpvNo).trim());
+    await deleteChequeFromBpv(voucher, cdc.chequeNo);
+    dropFromSelection(cdc.chequeNo);
+    await fetchCdcs();
   };
+
+  const handleHideCdc = async (cdc) => {
+    await hideCheque('cdc', cdc);
+    dropFromSelection(cdc.chequeNo);
+    setCdcs(prev => prev.filter(c => c.id !== cdc.id));
+  };
+
+  const handleDeleteManualCdc = async (cdc) => {
+    const standaloneCdcs = JSON.parse(localStorage.getItem('cdcCheques') || '[]');
+    localStorage.setItem('cdcCheques', JSON.stringify(standaloneCdcs.filter(c => c.id !== cdc.id)));
+    dropFromSelection(cdc.chequeNo);
+    await fetchCdcs();
+  };
+
 
   // Toggle selection for a single CDC
   const toggleCdcSelection = (chequeNo) => {
@@ -794,12 +839,13 @@ export default function CDCPage() {
                   <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">View</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">Delete</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {filteredCdcs.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan="9" className="px-4 py-8 text-center text-slate-500">
                       No CDCs found for this month. Create CDC vouchers in BPV Manager.
                     </td>
                   </tr>
@@ -842,6 +888,15 @@ export default function CDCPage() {
                           <HiExternalLink className="w-4 h-4" />
                           BPV
                         </Link>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => setDeleteTarget(cdc)}
+                          className="inline-flex items-center text-red-500 hover:text-red-700"
+                          title="Delete cheque"
+                        >
+                          <HiTrash className="w-4 h-4" />
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -970,6 +1025,15 @@ export default function CDCPage() {
         onClose={() => setIsAddModalOpen(false)}
         onSave={handleAddCheque}
         type="CDC"
+      />
+
+      <DeleteChequeDialog
+        cheque={deleteTarget}
+        voucher={deleteTarget && vouchers.find(v => String(v.bpvNo).trim() === String(deleteTarget.bpvNo).trim())}
+        onDeleteFromBpv={() => handleDeleteFromBpv(deleteTarget)}
+        onHide={() => handleHideCdc(deleteTarget)}
+        onDeleteManual={() => handleDeleteManualCdc(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
       />
     </div>
   );

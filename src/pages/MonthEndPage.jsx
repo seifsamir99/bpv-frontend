@@ -107,6 +107,9 @@ export default function MonthEndPage() {
   const totalOT = filteredEmployees.reduce((sum, emp) => {
     return sum + (parseFloat(getValue(emp.employeeId, 'otHours')) || 0);
   }, 0);
+  const totalSundayOT = filteredEmployees.reduce((sum, emp) => {
+    return sum + (parseFloat(getValue(emp.employeeId, 'sundayOtHours')) || 0);
+  }, 0);
   const totalBonus = filteredEmployees.reduce((sum, emp) => {
     return sum + (parseFloat(getValue(emp.employeeId, 'bonus')) || 0);
   }, 0);
@@ -242,14 +245,18 @@ export default function MonthEndPage() {
         )}
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
             <div className="text-sm text-slate-500">Total Employees</div>
             <div className="text-2xl font-bold text-slate-800">{filteredEmployees.length}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-            <div className="text-sm text-slate-500">Total OT Hours</div>
+            <div className="text-sm text-slate-500">OT Hours <span className="text-xs text-slate-400">×1.25</span></div>
             <div className="text-2xl font-bold text-amber-600">{totalOT.toFixed(1)}</div>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm border border-violet-100 p-4">
+            <div className="text-sm text-violet-600">Sunday OT <span className="text-xs text-violet-400">×1</span></div>
+            <div className="text-2xl font-bold text-violet-600">{totalSundayOT.toFixed(1)}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm border border-emerald-100 p-4">
             <div className="text-sm text-emerald-600">Total Bonus</div>
@@ -340,7 +347,12 @@ export default function MonthEndPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Employee</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Designation</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">Rate/Day</th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider w-28">OT Hours</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider w-32 min-w-[7rem]">
+                    OT Hours
+                    <div className="text-[10px] font-normal normal-case tracking-normal text-slate-400">
+                      ×1.25 / <span className="text-violet-500">Sun ×1</span>
+                    </div>
+                  </th>
                   <th className="px-4 py-3 text-center text-xs font-semibold text-emerald-600 uppercase tracking-wider w-28">Bonus (+)</th>
                   <th className="px-4 py-3 text-center text-xs font-semibold text-emerald-600 uppercase tracking-wider w-44">Bonus Reason</th>
                   <th className="px-4 py-3 text-center text-xs font-semibold text-red-500 uppercase tracking-wider w-36">Deduction Reason</th>
@@ -351,6 +363,9 @@ export default function MonthEndPage() {
               <tbody className="divide-y divide-slate-100">
                 {filteredEmployees.map(employee => {
                   const otHours = getValue(employee.employeeId, 'otHours');
+                  const sundayOtHours = getValue(employee.employeeId, 'sundayOtHours');
+                  const otEdited = localChanges[employee.employeeId]?.otHours !== undefined
+                    || localChanges[employee.employeeId]?.sundayOtHours !== undefined;
                   const bonus = getValue(employee.employeeId, 'bonus');
                   const bonusReason = getValue(employee.employeeId, 'bonusReason');
                   const deductionReason = getValue(employee.employeeId, 'deductionReason');
@@ -393,11 +408,27 @@ export default function MonthEndPage() {
                           onChange={(e) => handleChange(employee.employeeId, 'otHours', e.target.value)}
                           className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-center text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
                           placeholder="0"
+                          title="Weekday OT hours, paid at hourly × 1.25"
                         />
+                        {/* Sunday OT: hours worked on the rest day, paid at the
+                            plain hourly rate (×1) instead of ×1.25. */}
+                        <div className="mt-1.5">
+                          <div className="text-[10px] font-semibold text-violet-600 text-center leading-tight mb-0.5">☀ Sunday ×1</div>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={sundayOtHours}
+                            onChange={(e) => handleChange(employee.employeeId, 'sundayOtHours', e.target.value)}
+                            className="w-full px-3 py-1.5 border border-violet-300 bg-violet-50 rounded-lg text-center text-sm font-medium text-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                            placeholder="0"
+                            title="Sunday OT hours, paid at hourly × 1"
+                          />
+                        </div>
                         {/* Auto-totalled from the engineers' daily Site Log. Typing
-                            here pins the value (ot_source='manual') and the log
-                            stops overwriting it. */}
-                        {employee.otSource === 'log' && !localChanges[employee.employeeId]?.otHours && (
+                            in either box pins the row (ot_source='manual') and the
+                            log stops overwriting it. */}
+                        {employee.otSource === 'log' && !otEdited && (
                           <div className="text-[10px] text-lime-600 text-center mt-1">from site log</div>
                         )}
                       </td>

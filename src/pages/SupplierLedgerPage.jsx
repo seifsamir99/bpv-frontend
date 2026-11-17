@@ -35,6 +35,12 @@ const todayISO = () => {
 };
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// Removing a supplier also deletes its invoices and payments, so say so plainly.
+const confirmRemoveSupplier = (s) => window.confirm(
+  `Remove supplier ${s.name}?\n\n`
+  + `This also permanently deletes all of its invoices and payments`
+  + `${round2(s.outstanding) !== 0 ? ` (AED ${formatAED(s.outstanding)} outstanding)` : ''}. This cannot be undone.`);
+
 const inputCls = 'input-field py-1.5 text-sm';
 
 function Kpi({ label, value, tone = 'text-slate-800', sub, icon: Icon }) {
@@ -380,10 +386,17 @@ function ImportPanel({ suppliers, presetSupplierId, onClose, onDone }) {
 // Summary: all suppliers
 // ---------------------------------------------------------------------------
 function SummaryView({ openSupplier }) {
-  const { data, loading, error, addSupplier } = useSupplierLedger(null);
+  const { data, loading, error, addSupplier, deleteSupplier } = useSupplierLedger(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const t = data?.totals;
+
+  const handleRemove = async (e, s) => {
+    e.stopPropagation(); // the row itself opens the statement
+    if (!confirmRemoveSupplier(s)) return;
+    const res = await deleteSupplier(s.id, true);
+    if (!res.success) alert(res.error || 'Failed to remove supplier');
+  };
 
   // --- Print / Save as PDF: every supplier with a balance and its net payable ---
   const handlePrintList = () => {
@@ -494,11 +507,12 @@ function SummaryView({ openSupplier }) {
                         <th key={k} className="px-3 py-3 text-right font-semibold whitespace-nowrap">{label}</th>
                       ))}
                       <th className="px-4 py-3 text-left font-semibold">Last Paid</th>
+                      <th className="px-2 py-3" />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.suppliers.length === 0 ? (
-                      <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No suppliers yet. Click "Add Supplier".</td></tr>
+                      <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-400">No suppliers yet. Click "Add Supplier".</td></tr>
                     ) : data.suppliers.map((s) => (
                       <tr key={s.id} onClick={() => openSupplier(s.id)} className="hover:bg-blue-50/50 cursor-pointer">
                         <td className="px-4 py-3">
@@ -513,6 +527,11 @@ function SummaryView({ openSupplier }) {
                           <td key={k} className={`px-3 py-3 text-right ${s.ageing[k] > 0 ? 'text-slate-700' : 'text-slate-300'}`}>{formatAED(s.ageing[k])}</td>
                         ))}
                         <td className="px-4 py-3 text-slate-500">{fmtDate(s.lastPayment)}</td>
+                        <td className="px-2 py-3 text-right">
+                          <button onClick={(e) => handleRemove(e, s)} title="Remove supplier" className="p-1.5 rounded-lg text-red-500 hover:bg-red-50">
+                            <HiTrash className="w-4 h-4" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -525,6 +544,7 @@ function SummaryView({ openSupplier }) {
                         {BUCKETS.map(([k]) => (
                           <td key={k} className="px-3 py-3 text-right">{formatAED(t.ageing[k])}</td>
                         ))}
+                        <td />
                         <td />
                       </tr>
                     </tfoot>
@@ -778,10 +798,10 @@ function StatementView({ supplierId, onBack }) {
     if (!res.success) alert(res.error || 'Failed to delete payment');
   };
   const handleDeleteSupplier = async () => {
-    if (!window.confirm(`Delete supplier ${supplier.name}?`)) return;
-    const res = await deleteSupplier(supplier.id);
+    if (!confirmRemoveSupplier({ name: supplier.name, outstanding: totals.outstanding })) return;
+    const res = await deleteSupplier(supplier.id, true);
     if (res.success) onBack();
-    else alert(res.error || 'Failed to delete supplier');
+    else alert(res.error || 'Failed to remove supplier');
   };
 
   // --- Print / Save as PDF: laid out like the supplier's statement ---

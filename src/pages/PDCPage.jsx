@@ -3,6 +3,8 @@ import { HiCreditCard, HiCalendar, HiViewList, HiClock, HiExclamation, HiCheckCi
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import AddChequeModal from '../components/AddChequeModal';
+import DeleteChequeDialog from '../components/DeleteChequeDialog';
+import { isHidden, hideCheque, deleteChequeFromBpv } from '../utils/chequeDelete';
 import axios from 'axios';
 import { bpvApi } from '../services/api';
 
@@ -48,6 +50,8 @@ const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 
 export default function PDCPage() {
   const [pdcs, setPdcs] = useState([]);
+  const [vouchers, setVouchers] = useState([]);   // BPV vouchers, for delete-from-BPV
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -85,6 +89,7 @@ export default function PDCPage() {
 
       // 2. Filter PDC type vouchers only
       const pdcVouchers = (bpvResponse.data || []).filter(v => v.pdcType === 'PDC');
+      setVouchers(pdcVouchers);
 
       // 3. Extract PDCs from BPV line items
       // Group by chequeNo within each voucher and sum amounts (multiple items can share same cheque)
@@ -148,6 +153,7 @@ export default function PDCPage() {
       );
 
       // 6. Fetch saved statuses and merge
+      let visiblePdcs = uniquePdcs;
       try {
         const statusResponse = await axios.get(`${API_BASE_URL}/pdc/statuses`);
         if (statusResponse.data.success) {
@@ -157,12 +163,14 @@ export default function PDCPage() {
               pdc.status = statusMap[pdc.chequeNo];
             }
           });
+          // Cheques the user chose to hide from the tracker (BPV left untouched)
+          visiblePdcs = uniquePdcs.filter(pdc => !isHidden(statusMap, pdc));
         }
       } catch (statusErr) {
         console.warn('Could not fetch PDC statuses:', statusErr);
       }
 
-      setPdcs(uniquePdcs);
+      setPdcs(visiblePdcs);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -314,22 +322,30 @@ export default function PDCPage() {
   };
 
   // Handle deleting a PDC entry
+  // Manually added PDC (PDC Tracker sheet row). Confirmed by DeleteChequeDialog.
   const handleDeletePdc = async (pdc) => {
-    if (!window.confirm(`Delete cheque ${pdc.chequeNo} from ${pdc.company}?`)) {
-      return;
-    }
+    if (!pdc.rowIndex) throw new Error('This cheque has no sheet row to delete');
+    await axios.delete(`${API_BASE_URL}/pdc/${pdc.rowIndex}`);
+    await fetchPdcs();
+  };
 
-    try {
-      // Only delete if it's a manual entry (has rowIndex from PDC Tracker sheet)
-      if (pdc.source === 'manual' && pdc.rowIndex) {
-        await axios.delete(`${API_BASE_URL}/pdc/${pdc.rowIndex}`);
-        fetchPdcs();
-      } else {
-        alert('Cannot delete PDCs from BPV Manager. Please delete from BPV Manager directly.');
-      }
-    } catch (err) {
-      alert('Error deleting PDC: ' + err.message);
-    }
+  const dropFromSelection = (chequeNo) => setSelectedPdcs(prev => {
+    const next = new Set(prev); next.delete(chequeNo); return next;
+  });
+
+  // BPV-linked PDC: remove its line(s) from the voucher
+  const handleDeleteFromBpv = async (pdc) => {
+    const voucher = vouchers.find(v => String(v.bpvNo).trim() === String(pdc.bpvNo).trim());
+    await deleteChequeFromBpv(voucher, pdc.chequeNo);
+    dropFromSelection(pdc.chequeNo);
+    await fetchPdcs();
+  };
+
+  // BPV-linked PDC: just stop listing it
+  const handleHidePdc = async (pdc) => {
+    await hideCheque('pdc', pdc);
+    dropFromSelection(pdc.chequeNo);
+    setPdcs(prev => prev.filter(p => p.id !== pdc.id));
   };
 
   // Toggle selection for a single PDC
@@ -788,17 +804,13 @@ export default function PDCPage() {
                 </Link>
               </td>
               <td className="px-4 py-3 text-center">
-                {pdc.source === 'manual' ? (
-                  <button
-                    onClick={() => handleDeletePdc(pdc)}
-                    className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-800"
-                    title="Delete PDC"
-                  >
-                    <HiTrash className="w-4 h-4" />
-                  </button>
-                ) : (
-                  <span className="text-xs text-slate-400">-</span>
-                )}
+                <button
+                  onClick={() => setDeleteTarget(pdc)}
+                  className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-800"
+                  title="Delete PDC"
+                >
+                  <HiTrash className="w-4 h-4" />
+                </button>
               </td>
             </tr>
           );
@@ -966,6 +978,15 @@ export default function PDCPage() {
         onClose={() => setIsAddModalOpen(false)}
         onSave={handleAddCheque}
         type="PDC"
+      />
+
+      <DeleteChequeDialog
+        cheque={deleteTarget}
+        voucher={deleteTarget && vouchers.find(v => String(v.bpvNo).trim() === String(deleteTarget.bpvNo).trim())}
+        onDeleteFromBpv={() => handleDeleteFromBpv(deleteTarget)}
+        onHide={() => handleHidePdc(deleteTarget)}
+        onDeleteManual={() => handleDeletePdc(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
       />
     </div>
   );

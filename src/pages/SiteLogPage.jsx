@@ -331,6 +331,7 @@ export default function SiteLogPage() {
   }, [rows, search]);
 
   const totalOt = filtered.reduce((sum, r) => sum + (r.totalOt || 0), 0);
+  const totalSundayOt = filtered.reduce((sum, r) => sum + (r.totalSundayOt || 0), 0);
   const totalHours = filtered.reduce((sum, r) => sum + (r.totalHours || 0), 0);
   const conflictCount = rows.filter((r) => r.hasConflict).length;
 
@@ -422,6 +423,9 @@ export default function SiteLogPage() {
               </span>
               <span className="text-slate-500">
                 OT <span className="font-semibold text-amber-600">{totalOt}</span> h
+                {totalSundayOt > 0 && (
+                  <span className="text-violet-600"> (incl. {totalSundayOt} Sun ×1)</span>
+                )}
               </span>
               {conflictCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-amber-600">

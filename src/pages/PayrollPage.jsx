@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { HiCurrencyDollar, HiSave, HiRefresh, HiExclamationCircle, HiCash, HiPrinter, HiFolderOpen, HiPencilAlt, HiDocumentDownload } from 'react-icons/hi';
+import { HiCurrencyDollar, HiSave, HiRefresh, HiExclamationCircle, HiCash, HiPrinter, HiFolderOpen, HiPencilAlt, HiDocumentDownload, HiTrash } from 'react-icons/hi';
 import PageHeader from '../components/PageHeader';
 // Loaded on demand — it pulls in SheetJS, which nothing else on the page needs
 const WpsExportModal = React.lazy(() => import('../components/WpsExportModal'));
@@ -9,6 +9,8 @@ import useAttendance from '../hooks/useAttendance';
 import usePayrollDraft from '../hooks/usePayrollDraft';
 import { calculateLabourPayroll, calculateStaffPayroll } from '../utils/payrollCalculation';
 import getPrevMonth from '../utils/prevMonth';
+import wpsApi from '../services/wpsApi';
+import { companyName } from '../utils/wpsCompanies';
 
 import { API_BASE as API_BASE_URL } from '../services/apiBase';
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -80,6 +82,15 @@ export default function PayrollPage() {
   const [selectedMonth, setSelectedMonth] = useState(prevMonthDefault.month);
   const [selectedYear, setSelectedYear] = useState(prevMonthDefault.year);
   const [payrollResults, setPayrollResults] = useState(null);
+  // Which period ("type|month|year") the rows in payrollResults belong to.
+  // Save refuses when this doesn't match the selected period, so rows from one
+  // month can never be written into another.
+  const [resultsPeriodKey, setResultsPeriodKey] = useState(null);
+  const periodKey = `${selectedType}|${selectedMonth}|${selectedYear}`;
+  // Always the current period — async loads compare against it after their
+  // await and drop their result if the user switched period meanwhile.
+  const periodRef = useRef(periodKey);
+  periodRef.current = periodKey;
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [saveSuccess, setSaveSuccess] = useState(null);
@@ -95,6 +106,32 @@ export default function PayrollPage() {
   // to the payroll table. Shape: { id, label, amount }
   const [extras, setExtras] = useState([]);
 
+  // "Absent x2" marks: absent days picked here that cost a labourer TWO days'
+  // pay instead of one. Shape: { [employeeId]: [day, ...] }. Kept under their
+  // own localStorage key (not the draft) because the draft is cleared on save
+  // and a later re-calculate must still apply them. Not counted toward the
+  // 4-absence rule — see calculateLabourPayroll.
+  const doubleKey = `payroll_double_days_${selectedYear}_${selectedMonth}`;
+  const [doubleDays, setDoubleDays] = useState({});
+  const [doublePickerDay, setDoublePickerDay] = useState(null);
+  const [showDoublePanel, setShowDoublePanel] = useState(false);
+  // Month-End adjustments used by the last Calculate; null when the rows on
+  // screen came from a saved payroll (those are shown as stored, not recalculated)
+  const [calcAdjustments, setCalcAdjustments] = useState(null);
+
+  useEffect(() => {
+    let loaded = {};
+    try {
+      const raw = localStorage.getItem(doubleKey);
+      loaded = raw ? JSON.parse(raw) || {} : {};
+    } catch {
+      loaded = {};
+    }
+    setDoubleDays(loaded);
+    setDoublePickerDay(null);
+    setShowDoublePanel(Object.keys(loaded).length > 0);
+  }, [doubleKey]);
+
   // Print dropdown
   const [showPrintMenu, setShowPrintMenu] = useState(false);
   const printMenuRef = useRef(null);
@@ -106,27 +143,77 @@ export default function PayrollPage() {
     return () => document.removeEventListener('mousedown', close);
   }, [showPrintMenu]);
 
-  // WPS bank sheet export: the office picks last month's WPS .xls files, one
-  // per company (they hold the MOL codes and bank accounts), and the modal
-  // refills them from the payroll
-  const [wpsTemplates, setWpsTemplates] = useState(null); // [{ name, rows }]
+  // WPS bank sheet export. Each company's WPS lines (MOL codes, legal names,
+  // bank accounts) are kept in the database: the office uploads a company's
+  // bank file once (again when someone joins or changes bank), then each
+  // month just picks the company and the modal fills it from the payroll.
+  const [wpsRoster, setWpsRoster] = useState(null); // null = not loaded yet
+  const [wpsLoading, setWpsLoading] = useState(false);
+  const [wpsCompany, setWpsCompany] = useState(null); // compMol shown in the modal
+  const [showWpsMenu, setShowWpsMenu] = useState(false);
+  const wpsMenuRef = useRef(null);
   const wpsInputRef = useRef(null);
+  useEffect(() => {
+    const close = (e) => {
+      if (wpsMenuRef.current && !wpsMenuRef.current.contains(e.target)) setShowWpsMenu(false);
+    };
+    if (showWpsMenu) document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showWpsMenu]);
 
+  const loadWpsRoster = async () => {
+    setWpsLoading(true);
+    try {
+      const roster = await wpsApi.getRoster();
+      setWpsRoster(roster);
+      return roster;
+    } catch (err) {
+      setSaveError(`WPS: ${err.response?.data?.error || err.message}`);
+      return null;
+    } finally {
+      setWpsLoading(false);
+    }
+  };
+
+  const openWpsMenu = () => {
+    const next = !showWpsMenu;
+    setShowWpsMenu(next);
+    if (next && wpsRoster === null && !wpsLoading) loadWpsRoster();
+  };
+
+  // One entry per company in the roster, in file order
+  const wpsCompanies = useMemo(() => {
+    const groups = {};
+    (wpsRoster || []).forEach(r => { (groups[r.compMol] ||= []).push(r); });
+    return Object.entries(groups).map(([compMol, rows]) => ({ compMol, rows }));
+  }, [wpsRoster]);
+
+  // Upload a company's bank WPS file(s): saved as that company's roster
   const handleWpsFiles = async (e) => {
     const files = [...(e.target.files || [])];
     e.target.value = ''; // let the same files be picked again
     if (files.length === 0) return;
+    setShowWpsMenu(false);
     let current = '';
     try {
-      const { parseWpsTemplate } = await import('../utils/wpsExport');
-      const templates = [];
+      const { parseWpsTemplate, takeLegacyPairings } = await import('../utils/wpsExport');
+      const saved = [];
       for (const file of files) {
         current = file.name;
-        templates.push({ name: file.name, rows: parseWpsTemplate(await file.arrayBuffer()) });
+        const rows = parseWpsTemplate(await file.arrayBuffer());
+        const compMol = rows[0].compMol;
+        if (!compMol || rows.some(r => r.compMol !== compMol)) {
+          throw new Error('Every row must have the same COMPMOLCODE');
+        }
+        await wpsApi.replaceCompany(compMol, takeLegacyPairings(rows));
+        saved.push(compMol);
       }
-      setWpsTemplates(templates);
+      const roster = await loadWpsRoster();
+      setSaveError(null);
+      setSaveSuccess(`Saved WPS list for ${files.length} ${files.length === 1 ? 'company' : 'companies'} — pick the company from WPS Excel next month, no upload needed`);
+      if (roster && saved.length === 1) setWpsCompany(saved[0]);
     } catch (err) {
-      setSaveError(`WPS file ${current}: ${err.message}`);
+      setSaveError(`WPS file ${current}: ${err.response?.data?.error || err.message}`);
     }
   };
 
@@ -161,6 +248,35 @@ export default function PayrollPage() {
     // The auto-load effect picks the saved records up from the database
   };
 
+  const typeName = (t) => (t === 'staff' ? 'Staff' : t === 'labour' ? 'Labour' : 'Labour + Staff');
+
+  // Delete one whole saved payroll run (month + type) from the database
+  const deleteHistoryEntry = async (h) => {
+    const label = `${MONTH_NAMES[h.month]} ${h.year} ${typeName(h.type)}`;
+    if (!window.confirm(`Delete saved ${label} payroll (${h.employees} employees, ${fmt(h.totalNet)} AED)? This cannot be undone.`)) return;
+    try {
+      const res = await axios.delete(`${API_BASE_URL}/payroll`, {
+        params: { month: h.month, year: h.year, type: h.type },
+      });
+      if (!res.data.success) { setSaveError(res.data.error); return; }
+      setSaveError(null);
+      // If that run is on screen (directly or inside the All view), clear the
+      // table so nobody re-saves the rows that were just deleted.
+      const viewing = h.month === selectedMonth && h.year === selectedYear
+        && (selectedType === h.type || selectedType === 'all');
+      if (viewing) {
+        setPayrollResults(null);
+        setResultsPeriodKey(null);
+        setSelectedIds(new Set());
+        setOverrides({});
+      }
+      setSaveSuccess(`${res.data.message}${viewing ? ' — click Calculate Payroll to start this month again' : ''}`);
+      fetchHistory();
+    } catch (err) {
+      setSaveError(err.response?.data?.error || err.message);
+    }
+  };
+
   const isAllView = selectedType === 'all';
   // Column count of the results table — base 13 (checkbox, #, ID, Name,
   // Designation, Cash, Paid Days, Deductions, Rate/Hr, OT Hrs, OT Pay, Bonus,
@@ -171,19 +287,24 @@ export default function PayrollPage() {
   const { loadDraft, saveDraft, clearDraft, hasDraft, draftTimestamp } = usePayrollDraft(selectedType, selectedYear, selectedMonth);
   const isLoading = empLoading || attLoading;
 
-  // Clear results when type changes. Cash marks are kept — employee IDs are
-  // global, so marks made on the Labour tab must survive switching to All
-  // before saving (they used to be wiped here, silently losing the marks).
+  // Clear the table whenever the period (type, month or year) changes. Month
+  // changes used to keep the previous month's rows on screen, and Save then
+  // wrote them into the newly picked month. Cash marks survive a type switch:
+  // employee IDs are global, so marks made on the Labour tab must survive
+  // switching to All before saving.
   useEffect(() => {
     setPayrollResults(null);
+    setResultsPeriodKey(null);
     setSaveSuccess(null);
     setSaveError(null);
     setSelectedIds(new Set());
     setOverrides({});
+    setExtras([]);
     setPaymentFilter('all');
-  }, [selectedType]);
+    setCalcAdjustments(null);
+  }, [selectedType, selectedMonth, selectedYear]);
 
-  // Cash marks are month-specific — reset them when the period changes
+  // Cash marks are month-specific — reset them when the month changes
   useEffect(() => {
     setCashEmployees(new Set());
   }, [selectedMonth, selectedYear]);
@@ -214,12 +335,18 @@ export default function PayrollPage() {
   useEffect(() => {
     if (isLoading) return;
 
+    const key = periodKey;
     const autoLoad = async () => {
       try {
         const { rows: savedData, anySaved } = await fetchSavedPayroll();
+        // User switched period while this was loading — the answer is for a
+        // month that's no longer on screen, so drop it
+        if (periodRef.current !== key) return;
         if (savedData.length > 0 && anySaved) {
           // Saved data exists - load directly (no recalculation)
           setPayrollResults(savedData);
+          setResultsPeriodKey(key);
+          setCalcAdjustments(null);
 
           const validIds = savedData.map(r => r.employeeId);
           setSelectedIds(new Set(validIds));
@@ -243,16 +370,60 @@ export default function PayrollPage() {
     autoLoad();
   }, [selectedMonth, selectedYear, selectedType, isLoading]);
 
-  // Auto-save draft when overrides, cash selections or extra charges change
+  // Auto-save draft when overrides, cash selections or extra charges change.
+  // Only while the rows on screen belong to the selected period: on a month
+  // switch saveDraft points at the NEW month's key before the old month's
+  // edits are cleared, which used to copy one month's edits into another's draft.
   useEffect(() => {
+    if (resultsPeriodKey !== periodKey) return;
     if (Object.keys(overrides).length > 0 || cashEmployees.size > 0 || extras.length > 0) {
       saveDraft(overrides, selectedIds, cashEmployees, extras);
     }
-  }, [overrides, selectedIds, cashEmployees, extras, saveDraft]);
+  }, [overrides, selectedIds, cashEmployees, extras, saveDraft, resultsPeriodKey, periodKey]);
 
   // --- Calculate ---
+  // Pure calc for the current type; labour rows get the Absent x2 marks.
+  const runCalc = (adjustments, dd) => {
+    if (selectedType === 'all') {
+      // Combined view: run each type's calc on its own employees, labour first
+      const labourEmps = employees.filter(e => e.sheetType === 'labour');
+      const staffEmps = employees.filter(e => e.sheetType === 'staff');
+      return [
+        ...calculateLabourPayroll(labourEmps, attendance, adjustments, dd, selectedMonth).map(r => ({ ...r, empType: 'labour' })),
+        ...calculateStaffPayroll(staffEmps, attendance, adjustments).map(r => ({ ...r, empType: 'staff' })),
+      ];
+    }
+    return (selectedType === 'staff'
+      ? calculateStaffPayroll(employees, attendance, adjustments)
+      : calculateLabourPayroll(employees, attendance, adjustments, dd, selectedMonth)
+    ).map(r => ({ ...r, empType: selectedType }));
+  };
+
+  // Tick/untick one labourer for Absent x2 on one day. Persists right away and,
+  // if the rows on screen were calculated, re-runs the calc in place — overrides,
+  // selection, cash marks and extras are left alone.
+  const toggleDoubleDay = (employeeId, day) => {
+    const id = String(employeeId);
+    const days = new Set(doubleDays[id] || []);
+    if (days.has(day)) days.delete(day); else days.add(day);
+    const next = { ...doubleDays };
+    if (days.size > 0) next[id] = [...days].sort((a, b) => a - b);
+    else delete next[id];
+    setDoubleDays(next);
+    try {
+      if (Object.keys(next).length > 0) localStorage.setItem(doubleKey, JSON.stringify(next));
+      else localStorage.removeItem(doubleKey);
+    } catch {
+      // Private window / blocked storage: the marks still apply for this session
+    }
+    if (calcAdjustments && payrollResults) {
+      setPayrollResults(runCalc(calcAdjustments, next));
+    }
+  };
+
   const handleCalculate = async () => {
     if (isLoading) return;
+    const key = periodKey;
 
     // Per-month OT/bonus/deduction entries from Month-End for the SELECTED month
     let adjustments = [];
@@ -264,23 +435,13 @@ export default function PayrollPage() {
     } catch (err) {
       console.error('Error loading month-end adjustments:', err);
     }
+    // Period changed while loading — these figures are for the old month
+    if (periodRef.current !== key) return;
 
-    let results;
-    if (selectedType === 'all') {
-      // Combined view: run each type's calc on its own employees, labour first
-      const labourEmps = employees.filter(e => e.sheetType === 'labour');
-      const staffEmps = employees.filter(e => e.sheetType === 'staff');
-      results = [
-        ...calculateLabourPayroll(labourEmps, attendance, adjustments).map(r => ({ ...r, empType: 'labour' })),
-        ...calculateStaffPayroll(staffEmps, attendance, adjustments).map(r => ({ ...r, empType: 'staff' })),
-      ];
-    } else {
-      results = (selectedType === 'staff'
-        ? calculateStaffPayroll(employees, attendance, adjustments)
-        : calculateLabourPayroll(employees, attendance, adjustments)
-      ).map(r => ({ ...r, empType: selectedType }));
-    }
+    const results = runCalc(adjustments, doubleDays);
+    setCalcAdjustments(adjustments);
     setPayrollResults(results);
+    setResultsPeriodKey(key);
 
     const validIds = results.map(r => r.employeeId);
 
@@ -340,6 +501,43 @@ export default function PayrollPage() {
       };
     });
   }, [payrollResults, overrides]);
+
+  // --- Absent x2 picker data ---
+  const daysInSelectedMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+  const monthAbbr = MONTH_NAMES[selectedMonth].slice(0, 3);
+  const labourNameById = useMemo(() => {
+    const map = {};
+    employees.filter(e => e.sheetType === 'labour').forEach(e => { map[String(e.employeeId)] = e.name; });
+    return map;
+  }, [employees]);
+  // { day: [{ employeeId, name }] } — labourers marked Absent on each day
+  const absentByDay = useMemo(() => {
+    const byDay = {};
+    attendance.forEach(a => {
+      const id = String(a.employeeId);
+      if (!(id in labourNameById)) return;
+      for (let day = 1; day <= daysInSelectedMonth; day++) {
+        if ((a.days?.[day] || '').toString().trim().toLowerCase() === 'absent') {
+          (byDay[day] = byDay[day] || []).push({ employeeId: id, name: labourNameById[id] || a.name });
+        }
+      }
+    });
+    return byDay;
+  }, [attendance, labourNameById, daysInSelectedMonth]);
+  const firstAbsentDay = Object.keys(absentByDay).map(Number).sort((a, b) => a - b)[0] || 1;
+  const pickerDay = doublePickerDay ?? firstAbsentDay;
+  // Current marks grouped by day for the summary line
+  const doubleMarksByDay = useMemo(() => {
+    const byDay = {};
+    Object.entries(doubleDays).forEach(([id, days]) => {
+      days.forEach(day => {
+        const stillAbsent = (absentByDay[day] || []).some(x => x.employeeId === id);
+        (byDay[day] = byDay[day] || []).push({ employeeId: id, name: labourNameById[id] || `#${id}`, stillAbsent });
+      });
+    });
+    return Object.keys(byDay).map(Number).sort((a, b) => a - b).map(day => ({ day, people: byDay[day] }));
+  }, [doubleDays, absentByDay, labourNameById]);
+  const doubleMarkCount = doubleMarksByDay.reduce((n, g) => n + g.people.length, 0);
 
   // Handle field override
   const handleOverride = (employeeId, field, value) => {
@@ -434,6 +632,10 @@ export default function PayrollPage() {
   // --- Save to Google Sheet (only selected) ---
   const handleSave = async () => {
     if (!displayData || displayData.length === 0) return;
+    if (resultsPeriodKey !== periodKey) {
+      setSaveError(`The rows on screen are not for ${MONTH_NAMES[selectedMonth]} ${selectedYear} — click Calculate Payroll first`);
+      return;
+    }
 
     // Capture current cash employees as a snapshot (avoid closure issues)
     const cashEmployeesSnapshot = new Set(cashEmployees);
@@ -466,15 +668,15 @@ export default function PayrollPage() {
     setSaveError(null);
     setSaveSuccess(null);
     try {
-      // Save only what changed: diff each row against the saved snapshot and
-      // upsert just the differing ones (partial). A type with no saved data
-      // yet gets a full first save. Payroll is stored per type, so the All
+      // Each save replaces that month+type's saved payroll with exactly the
+      // ticked rows on screen (unticked people are removed). If a save already
+      // exists and differs, ask first. Payroll is stored per type, so the All
       // view saves labour and staff as separate writes.
       const num = (v) => Math.round((parseFloat(v) || 0) * 100) / 100;
       const fingerprint = (r, isCash) => JSON.stringify({
         nm: (r.name || '').trim(), ds: (r.designation || '').trim(),
         pd: num(r.paidDays), da: num(r.deductionAmount), rh: num(r.ratePerHour),
-        sb: num(r.salaryBeforeOT), oh: num(r.otHours), op: num(r.otPay),
+        sb: num(r.salaryBeforeOT), oh: num(r.otHours), so: num(r.sundayOtHours), op: num(r.otPay),
         bn: num(r.bonus), ns: num(r.netSalary),
         br: (r.bonusReason || '').trim(), dr: (r.deductionReason || '').trim(),
         dn: (r.deductionNote || '').trim(),
@@ -486,10 +688,11 @@ export default function PayrollPage() {
         `${r.empType}:${r.employeeId}`,
         fingerprint(r, r.isCash || r.paymentMethod === 'Cash'),
       ]));
-      const savedTypeCounts = savedRows.reduce((a, r) => {
-        a[r.empType] = (a[r.empType] || 0) + 1;
+      const savedByType = savedRows.reduce((a, r) => {
+        (a[r.empType] = a[r.empType] || []).push(r);
         return a;
       }, {});
+      const sumNet = (rows) => rows.reduce((s, r) => s + (parseFloat(r.netSalary) || 0), 0);
 
       const batches = (selectedType === 'all'
         ? [
@@ -499,16 +702,39 @@ export default function PayrollPage() {
         : [[selectedType, dataToSave]]
       ).filter(([, rows]) => rows.length > 0);
 
-      const messages = [];
-      let wroteAnything = false;
+      // Work out which types actually differ from what's saved, and ask once
+      // before replacing any existing save
+      const toWrite = [];
+      const overwriteLines = [];
       for (const [batchType, rows] of batches) {
-        const hasSaved = (savedTypeCounts[batchType] || 0) > 0;
-        // First save of this type → full snapshot; otherwise only changed rows
-        const rowsToSend = hasSaved
-          ? rows.filter(r => savedMap.get(`${batchType}:${r.employeeId}`) !== fingerprint(r, r.isCash))
-          : rows;
-        if (rowsToSend.length === 0) continue;
+        const saved = savedByType[batchType] || [];
+        const unchanged = saved.length === rows.length
+          && rows.every(r => savedMap.get(`${batchType}:${r.employeeId}`) === fingerprint(r, r.isCash));
+        if (unchanged) continue;
+        toWrite.push([batchType, rows]);
+        if (saved.length > 0) {
+          overwriteLines.push(
+            `${typeName(batchType)}: saved ${saved.length} employees, ${fmt(sumNet(saved))} AED`
+            + ` → on screen ${rows.length} employees, ${fmt(sumNet(rows))} AED`
+          );
+        }
+      }
 
+      if (toWrite.length === 0) {
+        setSaveSuccess(`Nothing changed — ${MONTH_NAMES[selectedMonth]} ${selectedYear} is already saved exactly like this`);
+        return;
+      }
+      if (overwriteLines.length > 0 && !window.confirm(
+        `${MONTH_NAMES[selectedMonth]} ${selectedYear} already has a saved payroll.\n\n`
+        + `${overwriteLines.join('\n')}\n\n`
+        + 'Replace the saved payroll with what is on screen?'
+      )) {
+        setSaveSuccess('Not saved — the previous save was kept');
+        return;
+      }
+
+      const messages = [];
+      for (const [batchType, rows] of toWrite) {
         // 30s timeout so the button can't hang forever if the connection drops
         // (e.g. a backend redeploy mid-request) — the save itself may still
         // have gone through; reloading shows the truth.
@@ -516,19 +742,23 @@ export default function PayrollPage() {
           month: selectedMonth,
           year: selectedYear,
           type: batchType,
-          data: rowsToSend,
-          partial: hasSaved,
+          data: rows,
+          partial: false,
         }, { timeout: 30000 });
         if (!res.data.success) {
           setSaveError(res.data.error);
           return;
         }
-        wroteAnything = true;
         messages.push(res.data.message);
       }
-      setSaveSuccess(wroteAnything ? messages.join(' · ') : 'Nothing changed — everything is already saved');
+      setSaveSuccess(messages.join(' · '));
       clearDraft();
+      // Bake the edits into the rows before dropping the overrides — clearing
+      // them alone flipped the table back to the pre-edit numbers, and the next
+      // save would then quietly overwrite the edits that were just saved.
+      setPayrollResults(displayData);
       setOverrides({});
+      fetchHistory();
       // Cash marks stay visible — they now match what was just saved
     } catch (err) {
       setSaveError(err.response?.data?.error || err.message);
@@ -1060,18 +1290,51 @@ export default function PayrollPage() {
                 )}
               </div>
               {displayData.length > 0 && (
-                <>
+                <div className="relative" ref={wpsMenuRef}>
                   <button
-                    onClick={() => wpsInputRef.current?.click()}
+                    onClick={openWpsMenu}
                     disabled={!isAllView}
                     className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
-                    title={isAllView ? "Pick last month's WPS .xls files (Newell + Najmat Al Waad together) to fill them from this payroll" : 'Switch to All to export WPS'}
+                    title={isAllView ? 'Pick the company and download its WPS bank file for this month' : 'Switch to All to export WPS'}
                   >
                     <HiDocumentDownload className="w-4 h-4" />
                     WPS Excel
                   </button>
+                  {showWpsMenu && (
+                    <div className="absolute right-0 mt-1 z-50 w-72 bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                      <div className="px-3 py-1 text-xs text-slate-400 font-medium">
+                        WPS file for {MONTH_NAMES[selectedMonth]} {selectedYear}
+                      </div>
+                      {wpsLoading && wpsRoster === null ? (
+                        <div className="px-3 py-2 text-sm text-slate-400">Loading…</div>
+                      ) : wpsCompanies.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-slate-500">
+                          No WPS list saved yet. Upload last month's WPS file for each company once — after that you just pick the company.
+                        </div>
+                      ) : (
+                        wpsCompanies.map(c => (
+                          <button
+                            key={c.compMol}
+                            onClick={() => { setShowWpsMenu(false); setWpsCompany(c.compMol); }}
+                            className="w-full text-left px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
+                          >
+                            <div className="font-medium">{companyName(c.compMol)}</div>
+                            <div className="text-xs text-slate-400">{c.rows.length} people on the bank file</div>
+                          </button>
+                        ))
+                      )}
+                      <div className="border-t border-slate-100 my-1" />
+                      <button
+                        onClick={() => wpsInputRef.current?.click()}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
+                        title="Pick one or both companies' WPS .xls — replaces that company's saved list (new hires, bank changes)"
+                      >
+                        Upload / update WPS file…
+                      </button>
+                    </div>
+                  )}
                   <input ref={wpsInputRef} type="file" accept=".xls,.xlsx" multiple onChange={handleWpsFiles} className="hidden" />
-                </>
+                </div>
               )}
               {displayData.length > 0 && (
                 <button
@@ -1103,12 +1366,13 @@ export default function PayrollPage() {
                 {history.map(h => {
                   const isCurrent = h.month === selectedMonth && h.year === selectedYear && h.type === selectedType;
                   return (
-                    <button
+                    <div
                       key={`${h.year}-${h.month}-${h.type}`}
+                      className={`flex items-center transition-colors ${isCurrent ? 'bg-purple-50' : 'hover:bg-slate-50'}`}
+                    >
+                    <button
                       onClick={() => openHistoryEntry(h)}
-                      className={`w-full flex flex-wrap items-center gap-x-6 gap-y-1 px-4 py-3 text-left transition-colors ${
-                        isCurrent ? 'bg-purple-50' : 'hover:bg-slate-50'
-                      }`}
+                      className="flex-1 min-w-0 flex flex-wrap items-center gap-x-6 gap-y-1 pl-4 pr-2 py-3 text-left"
                     >
                       <span className="font-medium text-slate-800 w-36">
                         {MONTH_NAMES[h.month]} {h.year}
@@ -1130,6 +1394,15 @@ export default function PayrollPage() {
                       )}
                       <span className="ml-auto font-bold text-orange-700">{fmt(h.totalNet)} AED</span>
                     </button>
+                    <button
+                      onClick={() => deleteHistoryEntry(h)}
+                      title={`Delete saved ${MONTH_NAMES[h.month]} ${h.year} ${typeName(h.type)} payroll`}
+                      aria-label={`Delete saved ${MONTH_NAMES[h.month]} ${h.year} ${typeName(h.type)} payroll`}
+                      className="mr-3 p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex-shrink-0"
+                    >
+                      <HiTrash className="w-4 h-4" />
+                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -1157,6 +1430,116 @@ export default function PayrollPage() {
         {attError && (
           <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-red-700 text-sm">
             Attendance: {attError}
+          </div>
+        )}
+
+        {/* Absent x2: chosen absent days cost two days' pay instead of one */}
+        {payrollResults && selectedType !== 'staff' && (
+          <div className="mb-4 bg-white rounded-xl border border-red-100 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setShowDoublePanel(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left"
+            >
+              <span className="text-sm font-semibold text-slate-700">
+                Double deduction days
+                {doubleMarkCount > 0 && (
+                  <span className="ml-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+                    {doubleMarkCount} marked
+                  </span>
+                )}
+              </span>
+              <span className="text-xs text-slate-400">{showDoublePanel ? 'Hide' : 'Show'}</span>
+            </button>
+            {showDoublePanel && (
+              <div className="px-4 pb-4 border-t border-slate-100">
+                <p className="text-xs text-slate-500 mt-3">
+                  Each ticked labourer loses 2 days' pay for that date instead of 1.
+                  These days are not counted toward the 4-absence rule.
+                </p>
+                {!calcAdjustments && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                    These rows were loaded from the saved payroll. Click Calculate Payroll to apply changes.
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <label className="text-sm text-slate-600" htmlFor="double-day">Date</label>
+                  <select
+                    id="double-day"
+                    value={pickerDay}
+                    onChange={(e) => setDoublePickerDay(parseInt(e.target.value))}
+                    className="text-sm text-slate-700 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    {Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1).map(day => {
+                      const n = (absentByDay[day] || []).length;
+                      return (
+                        <option key={day} value={day}>
+                          {day} {monthAbbr}{n > 0 ? ` (${n} absent)` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                {(absentByDay[pickerDay] || []).length === 0 ? (
+                  <p className="text-sm text-slate-400 mt-3">Nobody is marked Absent on {pickerDay} {monthAbbr}.</p>
+                ) : (
+                  <div className="grid gap-1 mt-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {absentByDay[pickerDay].map(p => {
+                      const checked = (doubleDays[p.employeeId] || []).includes(pickerDay);
+                      return (
+                        <label
+                          key={p.employeeId}
+                          className={`flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 cursor-pointer ${checked ? 'bg-red-50 text-red-700' : 'hover:bg-slate-50 text-slate-700'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleDoubleDay(p.employeeId, pickerDay)}
+                            className="w-4 h-4 rounded border-slate-300 text-red-500 focus:ring-red-500"
+                          />
+                          <span className="text-slate-400 text-xs">{p.employeeId}</span>
+                          <span className="truncate">{p.name}</span>
+                          {checked && <span className="ml-auto text-xs font-semibold">x2</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                {doubleMarksByDay.length > 0 && (
+                  <div className="mt-4 space-y-1">
+                    <div className="text-xs font-semibold text-slate-500 uppercase">Marked this month</div>
+                    {doubleMarksByDay.map(({ day, people }) => (
+                      <div key={day} className="flex flex-wrap items-center gap-1.5 text-sm">
+                        <button
+                          type="button"
+                          onClick={() => setDoublePickerDay(day)}
+                          className="font-medium text-slate-700 hover:text-orange-600"
+                        >
+                          {day} {monthAbbr}:
+                        </button>
+                        {people.map(p => (
+                          <span
+                            key={p.employeeId}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${p.stillAbsent ? 'bg-red-50 border-red-200 text-red-700' : 'bg-slate-50 border-slate-200 text-slate-400 line-through'}`}
+                            title={p.stillAbsent ? '' : 'Not Absent on this day in Attendance, so it is ignored'}
+                          >
+                            {p.name}
+                            <button
+                              type="button"
+                              onClick={() => toggleDoubleDay(p.employeeId, day)}
+                              className="hover:text-red-900"
+                              title="Remove"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -1340,6 +1723,10 @@ export default function PayrollPage() {
                             isModified={isFieldModified(row.employeeId, 'otHours')}
                             className="text-emerald-600"
                           />
+                          {/* Part of the total worked on Sundays, paid ×1 not ×1.25 */}
+                          {row.sundayOtHours > 0 && (
+                            <div className="text-[10px] text-violet-500 whitespace-nowrap">incl. {row.sundayOtHours} Sun</div>
+                          )}
                         </td>
                         <td className="px-3 py-2.5 text-right">
                           <EditableCell
@@ -1477,10 +1864,12 @@ export default function PayrollPage() {
         )}
       </main>
 
-      {wpsTemplates && (
+      {wpsCompany && wpsRoster && (
         <React.Suspense fallback={null}>
           <WpsExportModal
-            templates={wpsTemplates}
+            key={wpsCompany}
+            compMol={wpsCompany}
+            roster={wpsRoster}
             payrollRows={displayData}
             isCashEmployee={isCashEmployee}
             toggleCash={toggleCash}
@@ -1488,8 +1877,12 @@ export default function PayrollPage() {
             year={selectedYear}
             monthLabel={MONTH_NAMES[selectedMonth]}
             fmt={fmt}
-            onClose={() => setWpsTemplates(null)}
-            onExported={(msg) => { setWpsTemplates(null); setSaveError(null); setSaveSuccess(msg); }}
+            onClose={() => setWpsCompany(null)}
+            onPairingsSaved={(pairs) => setWpsRoster(prev => (prev || []).map(r =>
+              r.molCode in pairs ? { ...r, employeeId: pairs[r.molCode] } : r
+            ))}
+            onExported={(msg) => { setWpsCompany(null); setSaveError(null); setSaveSuccess(msg); }}
+            onError={(msg) => setSaveError(msg)}
           />
         </React.Suspense>
       )}
