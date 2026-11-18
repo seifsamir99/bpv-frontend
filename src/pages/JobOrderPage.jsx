@@ -3,8 +3,15 @@ import { HiClipboardList, HiUpload, HiPlus, HiTrash, HiDownload, HiX, HiRefresh,
 import PageHeader from '../components/PageHeader';
 
 import { API_BASE } from '../services/apiBase';
+import { PREDEFINED_SITES } from '../constants/sites';
 
 const API = `${API_BASE}/job-order`;
+
+// Which predefined site a project description belongs to, so the dropdown
+// shows the right site for a loaded record too (old records are mixed-case).
+const normProject = s => (s || '').toUpperCase().replace(/\s+/g, ' ').trim();
+const siteForProject = project =>
+  PREDEFINED_SITES.find(s => normProject(s.project) === normProject(project))?.name || '';
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -417,6 +424,8 @@ export default function JobOrderPage() {
   };
 
   const refreshRefNumber = async (projectCode) => {
+    // A saved record's ref number is its identity: never renumber it on edit.
+    if (editingId) return;
     const d = await fetchNextNumber(projectCode);
     if (d.success) setJo(prev => ({ ...prev, refNumber: d.ref_number }));
   };
@@ -702,6 +711,25 @@ export default function JobOrderPage() {
           <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">Job Order Details</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
+              <label className="input-label">Site</label>
+              <select
+                className="input-field"
+                value={siteForProject(jo.project)}
+                onChange={e => {
+                  const selected = PREDEFINED_SITES.find(s => s.name === e.target.value);
+                  if (!selected) return;
+                  const code = selected.code || jo.projectCode;
+                  setJo(prev => ({ ...prev, project: selected.project, projectCode: code }));
+                  if (code !== jo.projectCode) refreshRefNumber(code);
+                }}
+              >
+                <option value="">-- Select a site --</option>
+                {PREDEFINED_SITES.map(s => (
+                  <option key={s.name} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ''}</option>
+                ))}
+              </select>
+            </div>
+            <div>
               <label className="input-label">Project Code</label>
               <input
                 className="input-field"
@@ -741,7 +769,7 @@ export default function JobOrderPage() {
               <label className="input-label">Quote Date</label>
               <input type="date" className="input-field" value={jo.quoteDate} onChange={e => setField('quoteDate', e.target.value)} />
             </div>
-            <div className="sm:col-span-3">
+            <div className="sm:col-span-2">
               <label className="input-label">Sub (Trade / Scope of Work)</label>
               <input
                 className="input-field"

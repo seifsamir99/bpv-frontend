@@ -3,31 +3,9 @@ import { HiDocumentText, HiUpload, HiPlus, HiTrash, HiDownload, HiPencil, HiX, H
 import PageHeader from '../components/PageHeader';
 
 import { API_BASE } from '../services/apiBase';
+import { PREDEFINED_SITES } from '../constants/sites';
 
 const API = `${API_BASE}/lpo-gen`;
-
-const PREDEFINED_SITES = [
-  {
-    name: 'Warsan',
-    site: 'WARSAN - G+2P+7 RESIDENTIAL TOWER FOR AJMAL REAL ESTATE ON PLOT NO IC3-L-03 - WARSAN 4TH - 624',
-    project: 'G+2P+7 RESIDENTIAL TOWER FOR AJMAL REAL ESTATE ON PLOT NO IC3-L-03 - WARSAN 4TH - 624',
-  },
-  {
-    name: 'Wadi Al Safa 3',
-    site: 'WADI AL SAFA 3 - G+3 POD +13 FLOORS+ROOF ON PLOT NO 645-7809 WADI AL SAFA 3 FOR MR AHMAD HUSSEIN HUSSEIN ABOU EID',
-    project: 'G+3 POD +13 FLOORS+ROOF ON PLOT NO 645-7809 WADI AL SAFA 3 FOR MR AHMAD HUSSEIN HUSSEIN ABOU EID',
-  },
-  {
-    name: 'Nadd Al Shiba',
-    site: 'NADD AL SHIBA - G+ 2POD. + 6+ ROOF) PLOT NO. 618-5417 AT NADD AL SHIBA FIRST HUSSEIN HASSAN ABOU EID (S#106)',
-    project: 'G+ 2POD. + 6+ ROOF) PLOT NO. 618-5417 AT NADD AL SHIBA FIRST HUSSEIN HASSAN ABOU EID (S#106)',
-  },
-  {
-    name: 'Jedaf',
-    site: 'JEDAF - 4P + G+ 6 TYP + 1 R AT AL JEDAF ON PLOT NO. 3260901 FOR SHEIKH MOHAMMED SALEM SULTAN AL QASSIMI',
-    project: '4P + G+ 6 TYP + 1 R AT AL JEDAF ON PLOT NO. 3260901 FOR SHEIKH MOHAMMED SALEM SULTAN AL QASSIMI',
-  },
-];
 
 const today = () => new Date().toISOString().split('T')[0];
 const addDays = (d, n) => {
